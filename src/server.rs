@@ -1,13 +1,13 @@
 use std::borrow::Cow;
-use std::io::{Cursor, Read, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::io::{Cursor, Read, SeekFrom};
+use std::path::PathBuf;
 use dicom::encoding::{TransferSyntax, TransferSyntaxIndex};
 use dicom::object::InMemDicomObject;
 use dicom::transfer_syntax::TransferSyntaxRegistry;
 use dicom_ul::{FullAeAddr, Pdu, ServerAssociationOptions};
-use dicom_ul::association::{AsyncAssociation, AsyncServerAssociation};
+use dicom_ul::association::{AsyncAssociation,AsyncServerAssociation};
 use snafu::ResultExt;
-use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWrite};
+use tokio::io::AsyncSeekExt;
 use tokio::net::TcpStream;
 use tokio_util::io::SyncIoBridge;
 use tracing::debug;

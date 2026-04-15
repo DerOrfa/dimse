@@ -4,7 +4,7 @@ use std::future::poll_fn;
 use dicom_ul::{Pdu};
 use dicom_ul::pdu::{PDataValue, PDataValueType};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, Sender};
 use tokio::task::{JoinSet};
 use tracing::{debug, error, info, trace, warn};
 use crate::association::{Association, SendPayload};
@@ -25,8 +25,6 @@ enum OpenState{
 pub struct Dispatcher<B>  where B:FileAccess + Clone + Send + 'static
 {
 	ass:Association<Server>,
-	payload_terminal:Receiver<Payload>,
-	payload_sink: Sender<Payload>,
 	state:OpenState,
 	tasks:HashMap<u16,TaskHandle>,
 	join_set:JoinSet<Status>,
@@ -38,10 +36,8 @@ impl<B> Dispatcher<B> where B:FileAccess + Clone + Send
 	pub async fn new(ae_title:impl AsRef<str>, scu_stream: TcpStream, watcher:tokio::sync::watch::Sender<()>, file_access:B)  -> Result<Self>
 	{
 		let ass = Server::new(ae_title.as_ref(),scu_stream).await?;
-		let (payload_sink,payload_terminal) = channel(32);
 		Ok(Self{
 			ass, file_access,
-			payload_terminal, payload_sink,
 			state: OpenState::Open(watcher),
 			tasks: Default::default(),
 			join_set: Default::default(),
@@ -163,7 +159,7 @@ impl<B> Dispatcher<B> where B:FileAccess + Clone + Send
 	}
 	pub(crate) async fn run(mut self) -> Result<()>
 	{
-		let (sink, mut from_tasks) = tokio::sync::mpsc::channel::<Payload>(32);
+		let (sink, mut from_tasks) = channel::<Payload>(32);
 		loop {
 			tokio::select! {
 					n = self.next(&sink) => {n?},
