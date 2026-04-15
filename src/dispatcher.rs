@@ -22,7 +22,7 @@ enum OpenState{
 	Closing,
 	Closed
 }
-pub struct Dispatcher<B>  where B:FileAccess + Clone + Send + 'static
+pub struct Dispatcher<B>  where B:FileAccess + 'static
 {
 	ass:Association<Server>,
 	state:OpenState,
@@ -31,7 +31,7 @@ pub struct Dispatcher<B>  where B:FileAccess + Clone + Send + 'static
 	file_access:B
 }
 
-impl<B> Dispatcher<B> where B:FileAccess + Clone + Send
+impl<B> Dispatcher<B> where B:FileAccess
 {
 	pub async fn new(ae_title:impl AsRef<str>, scu_stream: TcpStream, watcher:tokio::sync::watch::Sender<()>, file_access:B)  -> Result<Self>
 	{
@@ -53,7 +53,7 @@ impl<B> Dispatcher<B> where B:FileAccess + Clone + Send
 			Some(Err(e)) => trace!("{e}"),
 		}
 	}
-	async fn next(&mut self, sink: &Sender<Payload>) -> Result<()>{
+	async fn next(&mut self, sink: &Sender<Payload>) -> Result<()> where <B as FileAccess>::Item: Sync{
 		let pdu = match &self.state {
 			OpenState::Open(watcher) => { // normal state receive data while watching for command to shut down
 				tokio::select! {
@@ -91,7 +91,7 @@ impl<B> Dispatcher<B> where B:FileAccess + Clone + Send
 		}
 		Ok(())
 	}
-	async fn next_pdu(&mut self, sink: &Sender<Payload>, pdu:Pdu) -> Result<()>
+	async fn next_pdu(&mut self, sink: &Sender<Payload>, pdu:Pdu) -> Result<()> where <B as FileAccess>::Item: Sync
 	{
 		match pdu{
 			Pdu::PData { data } => self.dispatch(sink,data).await?,
@@ -114,7 +114,8 @@ impl<B> Dispatcher<B> where B:FileAccess + Clone + Send
 		Ok(())
 	}
 
-	async fn dispatch(&mut self, to_dispatch: &Sender<Payload>, data:Vec<PDataValue>) -> Result<()>
+	async fn dispatch(&mut self, to_dispatch: &Sender<Payload>, data:Vec<PDataValue>)
+		-> Result<()> where <B as FileAccess>::Item: Sync
 	{
 		if let Some(first) = data.first()
 		{
@@ -157,7 +158,7 @@ impl<B> Dispatcher<B> where B:FileAccess + Clone + Send
 		}
 		Ok(())
 	}
-	pub(crate) async fn run(mut self) -> Result<()>
+	pub(crate) async fn run(mut self) -> Result<()> where <B as FileAccess>::Item: Sync
 	{
 		let (sink, mut from_tasks) = channel::<Payload>(32);
 		loop {

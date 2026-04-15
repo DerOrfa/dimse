@@ -21,7 +21,7 @@ use tokio::sync::watch::Receiver;
 use tokio::task::JoinHandle;
 use tracing::error;
 
-pub async fn init_server(accessor:impl FileAccess + Clone + Send + Sync + 'static)
+pub async fn init_server<F: FileAccess + 'static>(accessor:F)
 	-> Result<(SocketAddr,Receiver<()>,JoinHandle<Result<(),DimseError>>), DimseError>
 {
 	let dicom_listener = TcpListener::bind("localhost:0").await

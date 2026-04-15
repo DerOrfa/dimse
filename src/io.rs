@@ -45,9 +45,9 @@ impl<'a> Read for PipeDataReader<'a> {
 	}
 }
 
-pub trait FileAccess
+pub trait FileAccess: Clone + Send + Sync
 {
-	type Item:Send;
+	type Item:Send + Sync;
 	fn get_path(&self, uid:&Self::Item) -> impl Future<Output = std::result::Result<PathBuf, StatusFailure>> + Send;
 	fn store_file(&mut self, file:FileDicomObject<InMemDicomObject>) -> impl Future<Output = Status> + Send;
 	fn lookup(&self, ident: InMemDicomObject) -> impl Future<Output = std::result::Result<Vec<Self::Item>, StatusFailure>> + Send;

@@ -1,7 +1,7 @@
-use std::collections::{HashMap};
+use std::collections::{HashMap, HashSet};
 use crate::association::{Association,ReceiveMessage, SendPayload};
 use crate::context::Context;
-use crate::definitions::{FailureCode, RequestCode, Status, StatusFailure, StatusOk};
+use crate::definitions::{FailureCode, RequestCode, Status, StatusFailure, StatusOk, StatusWarning};
 use crate::msg::{MessageType, Request, Response};
 use crate::payload::{Attachment, Payload};
 use crate::{io, Taker};
@@ -34,16 +34,16 @@ pub struct TaskPipe{
 	sink:Sender<Payload>,
 }
 
-impl<B> Deref for Task<B> where B:FileAccess + Clone + Send
+impl<B> Deref for Task<B> where B:FileAccess
 {
 	type Target = Association<TaskPipe>;
 	fn deref(&self) -> &Self::Target {&self.assoc}
 }
-impl<B> DerefMut for Task<B> where B:FileAccess + Clone + Send
+impl<B> DerefMut for Task<B> where B:FileAccess
 {
 	fn deref_mut(&mut self) -> &mut Self::Target {&mut self.assoc}
 }
-impl<B> Task<B> where B:FileAccess + Clone + Send
+impl<B> Task<B> where B:FileAccess
 {
 	pub fn new(
 		peer:FullAeAddr<SocketAddr>,
@@ -87,50 +87,46 @@ impl<B> Task<B> where B:FileAccess + Clone + Send
 				// https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.3.html
 				if let Attachment::Obj(o) = take(&mut request.attachment){
 					let instances = self.backend.lookup(o).await?;
-					let mut failed = vec![];
+					let mut failed:HashSet<_> = Default::default();
+					let mut fail_comment = Option::<String>::None;
 					if instances.is_empty() {
 						FailureCode::NoSuchSOPInstance.into()
 					} else {
-						let (mut succeeded,mut fail,mut to_do) = (0,0,instances.len() as u16);
+						let (mut succeeded,mut warn,mut fail,mut to_do) = (0,0,0,instances.len() as u16);
 						for instance in instances {
-							let file = self.backend.get_path(&instance).await?;
-							let (meta, _) = get_filemeta(&file).map_err(|e|{
-								let err = format!("Failed getting metadata for {} ({})", file.display(),e);
-								error!(err);
-								StatusFailure::new(FailureCode::ProcessingFailure, Some(err))
-							})?;
-							if meta.media_storage_sop_class_uid() != request.abstract_syntax(&self.assoc){
-								return Err(StatusFailure{
-									code: FailureCode::SOPClassDoesNotMatch,
-									offending_element: Some(vec![tags::MEDIA_STORAGE_SOP_CLASS_UID]),
-									comment: Some(format!("media storage SOP Class UID of the file was: {}", meta.media_storage_sop_class_uid())),
-								})
-							}
-							match self.assoc.store_file(&file).await
-							{
-								Ok(_) => {
-									succeeded += 1; to_do -=1;
-									let resp = request.make_response(StatusOk::Pending {
-										succeeded:Some(succeeded), warn: None, fail: Some(fail), to_do: Some(to_do),
-									});
-									self.assoc.send_payload(resp.try_into()?).await?;
+							let resp = self.c_store(request.abstract_syntax(&self.assoc), &instance).await;
+							match &resp{
+								Ok(s) => {
+									match s {
+										StatusOk::Success => {succeeded += 1;},
+										StatusOk::Warning { offending_element, comment, .. } => {
+											warn += 1;
+											for e in offending_element.iter().flatten(){failed.insert(*e);	}
+											fail_comment = fail_comment.xor(comment.clone());
+										}
+										_ => {panic!("Unexpected store result");}
+									}
 								},
-								Err(e) => {
-									debug!("Store for C-GET {} failed ({e})",request.id);
-									fail += 1; to_do -=1;
-									failed.push(instance);
-									let resp = request.make_response(StatusOk::Pending {
-										succeeded:Some(succeeded), warn: None, fail: Some(fail), to_do: Some(to_do),
-									});
-									self.assoc.send_payload(resp.try_into()?).await?;
-								}
+								Err(e) => {fail += 1;}
 							}
+							to_do -= 1;
+							let resp = request.make_response(StatusOk::Pending {
+								succeeded: Some(succeeded),
+								warn: Some(warn),
+								fail: Some(fail),
+								to_do: Some(to_do),
+							});
+							self.assoc.send_payload(resp.try_into()?).await?;
 						}
 						if failed.is_empty()
 						{
 							StatusOk::Success.into()
 						} else { // todo more details
-							FailureCode::ProcessingFailure.into()
+							StatusOk::Warning {
+								code: StatusWarning::AttributeListWarning,
+								offending_element: if failed.is_empty(){None} else {Some(failed.into_iter().collect())},
+								comment: fail_comment,
+							}.into()
 						}
 					}
 				} else { FailureCode::InvalidArgument.into() }
@@ -144,6 +140,33 @@ impl<B> Task<B> where B:FileAccess + Clone + Send
 			_ => {todo!()}
 		}
 	}
+
+	async fn c_store(&mut self, abstract_syntax:String, instance: &B::Item) -> Status
+	{
+
+		let file = self.backend.get_path(&instance).await?;
+		let (meta, _) = get_filemeta(&file).map_err(|e| {
+			let err = format!("Failed getting metadata for {} ({})", file.display(), e);
+			error!(err);
+			StatusFailure::new(FailureCode::ProcessingFailure, Some(err))
+		})?;
+		if meta.media_storage_sop_class_uid() != abstract_syntax {
+			return Err(StatusFailure {
+				code: FailureCode::SOPClassDoesNotMatch,
+				offending_element: Some(vec![tags::MEDIA_STORAGE_SOP_CLASS_UID]),
+				comment: Some(format!("media storage SOP Class UID of the file was: {}", meta.media_storage_sop_class_uid())),
+			})
+		}
+		match self.assoc.store_file(&file).await
+		{
+			Ok(_) => Ok(StatusOk::Success.into()),
+			Err(e) => {
+				debug!("Store for C-GET failed ({e})");
+				Err(StatusFailure::new(FailureCode::Failure, Some(e.to_string())))
+			}
+		}
+	}
+
 	pub fn spawn(
 		address:FullAeAddr<SocketAddr>,
 		local:FullAeAddr<SocketAddr>,
@@ -152,7 +175,8 @@ impl<B> Task<B> where B:FileAccess + Clone + Send
 		backend:B,
 		mut request: Request,
 		set:&mut JoinSet<Status>
-	) -> TaskHandle where B:'static {
+	) -> TaskHandle where B:'static, <B as FileAccess>::Item: Sync
+	{
 		let (to_task, from_dispatch) = channel(32);
 		let msg_register = Arc::<RwLock<HashMap<u16, RequestCode>>>::default();
 		let msg_register2 = msg_register.clone();

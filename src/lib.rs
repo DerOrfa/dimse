@@ -123,7 +123,7 @@ pub fn lazy_dump_to_string<D>(obj:&InMemDicomObject<D>) -> Option<String> where 
 // https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.html
 
 pub async fn serve<A>(listener:impl Into<FullAeAddr<TcpListener>>, watcher: Sender<()>, accessor:A)
-	-> Result<()> where A:FileAccess + Clone + Send + Sync + 'static
+	-> Result<()> where A:FileAccess + 'static
 {
 	let listener = listener.into();
 	tracing::info!("SCP \"{}\" listening on: tcp://{}",
