@@ -79,13 +79,6 @@ impl Client {
 			.collect();
 		Ok(contexts)
 	}
-	// fn send_file(&mut self, filename: PathBuf, offset: u64, pc_id: u8) -> std::io::Result<()>
-	// {
-	// 	let mut source = std::fs::File::open(filename)?;
-	// 	source.seek(SeekFrom::Start(offset))?;
-	// 	let mut sink = self.0.send_pdata(pc_id);
-	// 	std::io::copy(&mut source,&mut sink).map(|_|())
-	// }
 }
 
 impl ReceivePdu for Client

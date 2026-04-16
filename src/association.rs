@@ -9,6 +9,7 @@ use crate::error::DimseError::{UnexpectedEmptyMsg, UnexpectedMessageType, Unexpe
 use crate::error::{DimseError, Result};
 use crate::msg::{MessageType, Request};
 use crate::payload::{Attachment, Payload};
+use crate::pending_receive::PendingReceive;
 use dicom::core::{PrimitiveValue, VR};
 use dicom::encoding::{TransferSyntax};
 use dicom::object::{FileDicomObject, InMemDicomObject};
@@ -24,6 +25,7 @@ use dicom::dump::DumpOptions;
 use dicom::object::mem::InMemElement;
 use dicom_dictionary_std::tags;
 use dicom_dictionary_std::uids;
+use futures::{Stream, StreamExt, TryStreamExt};
 use tokio::io::{AsyncSeekExt, AsyncWrite};
 use tracing::{debug, warn};
 use crate::client::RetrieveLevel;
@@ -167,48 +169,23 @@ impl<A> Association<A>
 		self.context.find_pc(sop_class)
 			.map(|ctx|Request::new(command, ctx, attr))
 	}
-	pub async fn find(&mut self, level: RetrieveLevel, attr:impl IntoIterator<Item = InMemElement>) -> Result<Vec<InMemDicomObject>>
-		where Self: ReceiveMessage + SendPayload
+	pub async fn find(&mut self, level: RetrieveLevel, attr:impl IntoIterator<Item = InMemElement>) -> Result<impl Stream<Item=Result<InMemDicomObject>>>
+		where Self: ReceiveMessage + SendPayload + Unpin
 	{
 		let rq = self.new_request(C_FIND, uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND, vec![])?
 			.with_identifier(attr.into_iter().chain([InMemElement::new(tags::QUERY_RETRIEVE_LEVEL,VR::CS,level.as_ref())]));
 
-		self.send_request(rq).await?;
-		let mut ret:Vec<InMemDicomObject> = vec![];
-		loop
-		{
-			let r = self.receive_response(C_FIND).await?;
-			match r.status
-			{
-				Ok(StatusOk::Success) =>
-					break,
-				Ok(StatusOk::Pending{ .. }) => {
-					match r.into_attachment()
-					{
-						Attachment::Obj(o) => ret.push(o),
-						_ => {todo!()}
-					}
-				},
-				Ok(StatusOk::Warning{ code, .. }) =>
-					warn!("{code}"),
-				Err(e) =>
-					return Err(e).with_whatever_context::<_,_,DimseError>(|e|
-						format!("Failure reading find results: {e}"))?
-			}
-		}
-		Ok(ret)
+		self.send_request(rq).await.map(|_|PendingReceive::new(self, C_FIND))
 	}
-	pub async fn collect_abstract_syntax(&mut self, filter:impl IntoIterator<Item = InMemElement>) -> Result<Vec<String>>
-		where Self: ReceiveMessage + SendPayload
+	pub async fn collect_abstract_syntax(&mut self, filter:impl IntoIterator<Item = InMemElement>) -> Result<impl Stream<Item=Result<String>>>
+		where Self: ReceiveMessage + SendPayload + Unpin
 	{
 		let attr = filter.into_iter().chain([
 			InMemElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::Empty),
 		]);
 		
-		let ret:Result<HashSet<String>> = self.find(RetrieveLevel::IMAGE,attr).await?
-			.into_iter().map(|mut o|Taker::take(&mut o, tags::SOP_CLASS_UID))
-			.collect();
-		Ok(ret?.into_iter().collect())
+		Ok(self.find(RetrieveLevel::IMAGE,attr).await?
+			.map(|o|o.and_then(|mut o|Taker::take(&mut o, tags::SOP_CLASS_UID))))
 	}
 
 	pub async fn move_study(&mut self, uid:impl AsRef<str>, dest_aet:impl AsRef<str>) -> Result<()>

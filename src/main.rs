@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs::File;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -13,6 +14,7 @@ use comfy_table::Attribute::Dim;
 use dicom::core::dictionary::{UidDictionary, UidDictionaryEntry};
 use dicom::transfer_syntax::{TransferSyntaxIndex, TransferSyntaxRegistry};
 use dicom_ul::AeAddr;
+use futures::TryStreamExt;
 use glob::glob;
 use dimse::error::DimseError;
 use snafu::prelude::*;
@@ -97,12 +99,12 @@ async fn main() -> dimse::error::Result<()>
 		Commands::FindStudy { name } => {
 			let mut client = Client::new(cli.addr, cli.calling_ae, vec![])?;
 
-			let found =client.find(dimse::client::RetrieveLevel::STUDY,[
+			let found:Vec<_> =client.find(dimse::client::RetrieveLevel::STUDY, [
 				InMemElement::new(tags::PATIENT_NAME, VR::PN, name),
 				InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
 				InMemElement::new(tags::STUDY_DATE, VR::DA, PrimitiveValue::Empty),
 				InMemElement::new(tags::STUDY_TIME, VR::TM, PrimitiveValue::Empty),
-			]).await?;
+			]).await?.try_collect().await?;
 
 			let mut table = Table::new();
 			table
@@ -112,20 +114,18 @@ async fn main() -> dimse::error::Result<()>
 			let reg = StandardSopClassDictionary::default();
 			for mut obj in found
 			{
-
-				let abstract_syntax = client.collect_abstract_syntax([
-					obj.element(tags::STUDY_INSTANCE_UID)?.to_owned(),
-				]).await?;
-
-				let abstract_syntax:Vec<_> = abstract_syntax.iter()
-					.map(|a|reg.by_uid(a.as_str()).map_or("<unknown>",|a|a.name))
-					.collect();
+				let abstract_syntax:Vec<_> = client.collect_abstract_syntax([
+						obj.element(tags::STUDY_INSTANCE_UID)?.to_owned(),
+					]).await?
+					.map_ok(|a|reg.by_uid(a.as_str()).map_or("<unknown>",|a|a.name))
+					.try_collect::<HashSet<_>>().await?//make entries unique
+					.into_iter().collect();
 
 				let row = [tags::PATIENT_NAME, tags::STUDY_DATE, tags::STUDY_TIME, tags::STUDY_INSTANCE_UID].into_iter()
 					.map(|t|obj.take(t).map(|t|t.to_str().as_deref().unwrap_or("<INVALID ELEMENT>").to_string()))
 					.map(|t|t.unwrap_or("<EMPTY>".into()))
 					.map(Cell::new);
-				let row = row.chain([Cell::new(abstract_syntax.join(", "))]);
+				let row = row.chain([Cell::new(abstract_syntax.join("\n"))]);
 				table.add_row(row);
 			}
 			if table.row_count() > 0 {
@@ -135,12 +135,12 @@ async fn main() -> dimse::error::Result<()>
 		Commands::ListInstances { uid } => {
 			let mut client = Client::new(cli.addr, cli.calling_ae,vec![])?;
 
-			let mut found =client.find(dimse::client::RetrieveLevel::IMAGE,[
+			let mut found:Vec<_> =client.find(dimse::client::RetrieveLevel::IMAGE,[
 				InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, uid),
 				InMemElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::Empty),
 				InMemElement::new(tags::SOP_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
 				InMemElement::new(tags::CONTENT_TIME,VR::TM, PrimitiveValue::Empty),
-			]).await?;
+			]).await?.try_collect().await?;
 			found.sort_by_key::<String,_>(|o|Taker::get(o,tags::CONTENT_TIME).unwrap());
 
 
