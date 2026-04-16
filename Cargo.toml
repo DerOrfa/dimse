@@ -20,3 +20,4 @@ glob = "0.3"
 snafu = { version = "0.8.9", features = ["backtrace"] }
 tokio-util = { version = "0.7.18", features = ["io-util"] }
 futures = "0.3.32"
+indicatif = "0.18.4"

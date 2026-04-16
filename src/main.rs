@@ -1,7 +1,9 @@
+use futures::Stream;
 use std::collections::HashSet;
 use std::fs::File;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing::{info, debug, error, Level};
 use dimse::client::Client;
 use clap::builder::{PossibleValue};
@@ -14,11 +16,13 @@ use comfy_table::Attribute::Dim;
 use dicom::core::dictionary::{UidDictionary, UidDictionaryEntry};
 use dicom::transfer_syntax::{TransferSyntaxIndex, TransferSyntaxRegistry};
 use dicom_ul::AeAddr;
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use glob::glob;
 use dimse::error::DimseError;
 use snafu::prelude::*;
 use dimse::Taker;
+use indicatif::{ProgressBar, ProgressStyle};
+use dimse::association::Association;
 
 #[derive(Clone)]
 struct LogLevel(Level);
@@ -88,6 +92,14 @@ pub enum Commands
 	Probe {}
 }
 
+fn connect(addr:AeAddr<SocketAddr>, calling_ae:Option<String>) -> dimse::error::Result<(Association<Client>,ProgressBar)>
+{
+	let sp = ProgressBar::new_spinner();
+	sp.enable_steady_tick(Duration::from_millis(500));
+	sp.set_message(format!("Connecting to {}", addr));
+	Client::new(addr, calling_ae, vec![]).map(|c|(c,sp))
+}
+
 #[tokio::main]
 #[snafu::report]
 async fn main() -> dimse::error::Result<()>
@@ -97,8 +109,8 @@ async fn main() -> dimse::error::Result<()>
 	tracing_subscriber::fmt().with_max_level(cli.log_level.0).init();
 	match cli.command {
 		Commands::FindStudy { name } => {
-			let mut client = Client::new(cli.addr, cli.calling_ae, vec![])?;
-
+			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
+			sp.set_message(format!(r#"Looking up "{}""#, name));
 			let found:Vec<_> =client.find(dimse::client::RetrieveLevel::STUDY, [
 				InMemElement::new(tags::PATIENT_NAME, VR::PN, name),
 				InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
@@ -106,12 +118,16 @@ async fn main() -> dimse::error::Result<()>
 				InMemElement::new(tags::STUDY_TIME, VR::TM, PrimitiveValue::Empty),
 			]).await?.try_collect().await?;
 
+			sp.finish_and_clear();
+
 			let mut table = Table::new();
 			table
 				.set_header(vec!["Name", "Date", "Time", "UID", "Abstract Syntaxes"])
 				.set_content_arrangement(ContentArrangement::Dynamic);
 
 			let reg = StandardSopClassDictionary::default();
+			let progress = ProgressBar::new(found.len() as u64);
+			progress.set_style(ProgressStyle::with_template("[Scanning studies] {wide_bar} {pos}/{len}").unwrap());
 			for mut obj in found
 			{
 				let abstract_syntax:Vec<_> = client.collect_abstract_syntax([
@@ -127,21 +143,34 @@ async fn main() -> dimse::error::Result<()>
 					.map(Cell::new);
 				let row = row.chain([Cell::new(abstract_syntax.join("\n"))]);
 				table.add_row(row);
+				progress.inc(1);
 			}
+			progress.finish_and_clear();
 			if table.row_count() > 0 {
 				println!("{}", table);
 			}
 		}
 		Commands::ListInstances { uid } => {
-			let mut client = Client::new(cli.addr, cli.calling_ae,vec![])?;
-
-			let mut found:Vec<_> =client.find(dimse::client::RetrieveLevel::IMAGE,[
+			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
+			sp.set_message(format!(r#"Looking up "{}""#, uid));
+			let mut instances = vec![];
+			let mut found =client.find(dimse::client::RetrieveLevel::IMAGE,[
 				InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, uid),
 				InMemElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::Empty),
 				InMemElement::new(tags::SOP_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
 				InMemElement::new(tags::CONTENT_TIME,VR::TM, PrimitiveValue::Empty),
-			]).await?.try_collect().await?;
-			found.sort_by_key::<String,_>(|o|Taker::get(o,tags::CONTENT_TIME).unwrap());
+			]).await?;
+
+			let progress = ProgressBar::no_length();
+			progress.set_style(ProgressStyle::with_template("[Scanning studies] {wide_bar} {pos}/{len}").unwrap());
+
+			while let Some(obj) = found.next().await.transpose()? {
+				if let Some(s) = found.size_hint().1{
+					progress.set_length(s as u64)
+				}
+				instances.push(obj);
+			}
+			instances.sort_by_key::<String,_>(|o|Taker::get(o,tags::CONTENT_TIME).unwrap());
 
 
 			let mut table = Table::new();
@@ -150,7 +179,7 @@ async fn main() -> dimse::error::Result<()>
 				.set_header(vec!["content time", "uid", "abstract syntax"])
 				.set_content_arrangement(ContentArrangement::Dynamic);
 
-			for mut obj in found.into_iter()
+			for mut obj in instances
 			{
 				let as_name= Taker::take_opt(&mut obj,tags::SOP_CLASS_UID)?
 					.and_then(|e:String|reg.by_uid(e.as_str()))
@@ -168,11 +197,13 @@ async fn main() -> dimse::error::Result<()>
 			}
 		}
 		Commands::Move {uid,aet} => {
-			let mut client = Client::new(cli.addr, cli.calling_ae, vec![])?;
+			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
+			sp.set_message(format!(r#"Moving "{}""#, uid));
 			client.move_study(uid,aet).await?;
 		}
 		Commands::Store { pattern } => {
-			let mut client = Client::new(cli.addr, cli.calling_ae, vec![])?;
+			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
+			sp.set_message(format!(r#"Storing "{}""#, pattern.join(",")));
 
 			for p in pattern{
 				let files = glob(p.as_ref()).map_err(|e|e.to_string())
@@ -191,7 +222,8 @@ async fn main() -> dimse::error::Result<()>
 
 		}
 		Commands::Get { uid, out } => {
-			let mut client = Client::new(cli.addr, cli.calling_ae, vec![])?;
+			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
+			sp.set_message(format!(r#"Getting "{}""#, uid));
 			client.get_file(uid).await?.write_all(File::create(out)?)?;
 		}
 		Commands::Probe { } => {
@@ -199,6 +231,10 @@ async fn main() -> dimse::error::Result<()>
 			table
 				.set_header(vec!["ID", "Abstract Syntax UID", "Abstract Syntax Name", "transfer syntax", "transfer syntax name"])
 				.set_content_arrangement(ContentArrangement::Dynamic);
+
+			let sp = ProgressBar::new_spinner();
+			sp.enable_steady_tick(Duration::from_millis(500));
+			sp.set_message(format!("Probing {}", cli.addr));
 			for c in Client::probe(cli.addr,cli.calling_ae)?
 			{
 				let entry = StandardSopClassDictionary::default().by_uid(&c.abstract_syntax)

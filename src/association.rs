@@ -26,6 +26,7 @@ use dicom::object::mem::InMemElement;
 use dicom_dictionary_std::tags;
 use dicom_dictionary_std::uids;
 use futures::{Stream, StreamExt, TryStreamExt};
+use futures::stream::FusedStream;
 use tokio::io::{AsyncSeekExt, AsyncWrite};
 use tracing::{debug, warn};
 use crate::client::RetrieveLevel;
@@ -169,7 +170,7 @@ impl<A> Association<A>
 		self.context.find_pc(sop_class)
 			.map(|ctx|Request::new(command, ctx, attr))
 	}
-	pub async fn find(&mut self, level: RetrieveLevel, attr:impl IntoIterator<Item = InMemElement>) -> Result<impl Stream<Item=Result<InMemDicomObject>>>
+	pub async fn find(&mut self, level: RetrieveLevel, attr:impl IntoIterator<Item = InMemElement>) -> Result<impl FusedStream<Item=Result<InMemDicomObject>>>
 		where Self: ReceiveMessage + SendPayload + Unpin
 	{
 		let rq = self.new_request(C_FIND, uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND, vec![])?
@@ -177,7 +178,7 @@ impl<A> Association<A>
 
 		self.send_request(rq).await.map(|_|PendingReceive::new(self, C_FIND))
 	}
-	pub async fn collect_abstract_syntax(&mut self, filter:impl IntoIterator<Item = InMemElement>) -> Result<impl Stream<Item=Result<String>>>
+	pub async fn collect_abstract_syntax(&mut self, filter:impl IntoIterator<Item = InMemElement>) -> Result<impl FusedStream<Item=Result<String>>>
 		where Self: ReceiveMessage + SendPayload + Unpin
 	{
 		let attr = filter.into_iter().chain([
