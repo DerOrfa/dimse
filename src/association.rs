@@ -189,8 +189,8 @@ impl<A> Association<A>
 			.map(|o|o.and_then(|mut o|Taker::take(&mut o, tags::SOP_CLASS_UID))))
 	}
 
-	pub async fn move_study(&mut self, uid:impl AsRef<str>, dest_aet:impl AsRef<str>) -> Result<()>
-		where Self: ReceiveMessage + SendPayload
+	pub async fn move_study(&mut self, uid:impl AsRef<str>, dest_aet:impl AsRef<str>) -> Result<impl FusedStream<Item=Result<InMemDicomObject>>>
+		where Self: ReceiveMessage + SendPayload + Unpin
 	{
 		let rq = self.new_request(C_MOVE, uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE, vec![
 			InMemElement::new(tags::MOVE_DESTINATION,VR::AE, dest_aet.as_ref()),
@@ -199,34 +199,7 @@ impl<A> Association<A>
 			InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, uid.as_ref()),
 		]);
 
-		self.send_request(rq).await?;
-		loop {
-			let r = self.receive_response(C_MOVE).await?;
-			match r.status {
-				Ok(StatusOk::Success) => {
-					println!("Done:");
-					break
-				}
-				Ok(StatusOk::Pending{ succeeded, warn, fail, to_do }) => {
-					println!("Pending: Success:{}/{} Warning:{} Fail:{}",
-							 succeeded.unwrap_or(0),
-							 to_do.unwrap_or(0),
-							 warn.unwrap_or(0),
-							 fail.unwrap_or(0),
-					);
-					if let Attachment::Obj(obj) = r.into_attachment()
-					{
-						DumpOptions::new().dump_object_to(stdout(),&obj)?;
-					}
-				},
-				Ok(StatusOk::Warning{ code, .. }) =>
-					warn!("{code}"),
-				Err(e) =>
-					return Err(e).with_whatever_context::<_,_,DimseError>(|e|
-						format!("Failure reading move results: {e}"))?
-			}
-		}
-		Ok(())
+		self.send_request(rq).await.map(|_|PendingReceive::new(self,C_MOVE))
 	}
 
 	pub async fn store_file(&mut self, file:&Path) -> Result<()> where Self: SendPayload + ReceiveMessage

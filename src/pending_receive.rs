@@ -6,7 +6,7 @@ use crate::error::{DimseError, Result};
 use futures::Stream;
 use futures::stream::FusedStream;
 use snafu::ResultExt;
-use tracing::{error, warn};
+use tracing::{debug, error, trace, warn};
 use crate::definitions::{RequestCode, StatusOk};
 use crate::error::DimseError::UnexpectedEmptyMsg;
 use crate::payload::Attachment;
@@ -40,7 +40,10 @@ impl<A> Stream for PendingReceive<'_,A> where Association<A>:ReceiveMessage + Un
 		match polled {
 			Poll::Ready(Ok(r)) => {
 				let a = match r.status.clone() {
-					Ok(StatusOk::Success) => {this.terminated=true;return Poll::Ready(None)},
+					Ok(StatusOk::Success) => {
+						trace!("Got end signal, closing stream..");
+						this.terminated=true;return Poll::Ready(None)
+					},
 					Ok(StatusOk::Pending{ succeeded, warn, fail, to_do }) => {
 						this.succeeded = succeeded;
 						this.warn = warn;
@@ -64,7 +67,7 @@ impl<A> Stream for PendingReceive<'_,A> where Association<A>:ReceiveMessage + Un
 				match a
 				{
 					Attachment::Obj(o) => Poll::Ready(Some(Ok(o))),
-					_ => Poll::Ready(Some(Err(UnexpectedEmptyMsg))),
+					_ => Poll::Ready(Some(Ok(InMemDicomObject::new_empty()))),
 				}
 			}
 			Poll::Ready(Err(e)) => {
@@ -76,7 +79,12 @@ impl<A> Stream for PendingReceive<'_,A> where Association<A>:ReceiveMessage + Un
 		}
 	}
 	fn size_hint(&self) -> (usize, Option<usize>){
-		(0,self.to_do.map(|d| d as usize))
+		match (self.succeeded, self.warn, self.failed,self.to_do) {
+			(Some(succeeded),Some(warn),Some(fail),Some(to_do)) => {
+				(0, Some((succeeded+warn+fail+to_do) as usize))
+			},
+			_ => (0, None),
+		}
 	}
 }
 
