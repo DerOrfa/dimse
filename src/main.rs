@@ -12,6 +12,7 @@ use comfy_table::{Cell, ContentArrangement, Table};
 use comfy_table::Attribute::Dim;
 use dicom::core::dictionary::{UidDictionary, UidDictionaryEntry};
 use dicom::transfer_syntax::{TransferSyntaxIndex, TransferSyntaxRegistry};
+use dicom_ul::AeAddr;
 use glob::glob;
 use dimse::error::DimseError;
 use snafu::prelude::*;
@@ -45,7 +46,7 @@ struct Cli {
 	#[arg(long, default_value = Level::INFO.as_str())]
 	log_level:LogLevel,
 	/// address of the PACS to connect to
-	addr:SocketAddr,
+	addr:AeAddr<SocketAddr>,
 	/// the calling AE title, default is ANY-SCU
 	#[arg(long)]
 	calling_ae:Option<String>,

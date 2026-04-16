@@ -1,7 +1,7 @@
 use std::collections::{HashSet};
 use std::io::{Cursor, Read};
 use std::net::SocketAddr;
-use dicom_ul::{ClientAssociation, ClientAssociationOptions, FullAeAddr, Pdu};
+use dicom_ul::{AeAddr, ClientAssociation, ClientAssociationOptions, FullAeAddr, Pdu};
 use std::time::Duration;
 use dicom::encoding::{TransferSyntax};
 use dicom::object::InMemDicomObject;
@@ -26,7 +26,7 @@ pub enum RetrieveLevel
 }
 
 impl Client {
-	pub fn new<S>(addr: SocketAddr, calling_ae:Option<S>, abstract_syntaxes:impl IntoIterator<Item=&'static str>)
+	pub fn new<S>(addr: AeAddr<SocketAddr>, calling_ae:Option<S>, abstract_syntaxes:impl IntoIterator<Item=&'static str>)
 		-> Result<crate::association::Association<Self>> where S:AsRef<str>
 	{
 		debug!("Connecting to {addr}");
@@ -43,7 +43,7 @@ impl Client {
 			context
 		))
 	}
-	fn new_inner(addr: &SocketAddr, abstract_syntaxes:impl IntoIterator<Item=&'static str>, calling_ae:Option<&str>) -> Result<ClientAssociation<std::net::TcpStream>>
+	fn new_inner(addr: &AeAddr<SocketAddr>, abstract_syntaxes:impl IntoIterator<Item=&'static str>, calling_ae:Option<&str>) -> Result<ClientAssociation<std::net::TcpStream>>
 	{
 		// https://www.dicomlibrary.com/dicom/sop/
 		// https://www.dicomlibrary.com/dicom/transfer-syntax/
@@ -63,10 +63,11 @@ impl Client {
 			.read_timeout(Duration::from_secs(60))
 			.write_timeout(Duration::from_secs(60))
 			.calling_ae_title(calling_ae.unwrap_or("ANY-SCU".into()))
+			.called_ae_title(addr.ae_title().unwrap_or("ANY-SCP"))
 			.establish(addr)
 			.with_whatever_context::<_,_,DimseError>(|e|format!("DIMSE association with {addr} failed: {e}"))
 	}
-	pub fn probe<S>(addr: SocketAddr, calling_ae:Option<S>)
+	pub fn probe<S>(addr: AeAddr<SocketAddr>, calling_ae:Option<S>)
 		-> Result<Vec<PresentationContextNegotiated>> where S:AsRef<str>
 	{
 		// https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_d.3.2.html
