@@ -49,6 +49,8 @@ pub enum DimseError {
 	PipeSendError{source:SendError<Response>},
 	#[snafu(transparent)]
 	IoError{source: std::io::Error},
+	#[snafu(transparent)]
+	JoinError{source: tokio::task::JoinError},
 
 
 

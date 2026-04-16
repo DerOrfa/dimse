@@ -3,7 +3,6 @@
 
 use std::io::Seek;
 use std::{format, vec};
-use std::collections::HashSet;
 use crate::definitions::{RequestCode, StatusOk};
 use crate::error::DimseError::{UnexpectedEmptyMsg, UnexpectedMessageType, UnexpectedNonDataPdu};
 use crate::error::{DimseError, Result};
@@ -16,16 +15,15 @@ use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom_ul::pdu::{PDataValue, PresentationContextNegotiated};
 use dicom_ul::{FullAeAddr, Pdu};
 use snafu::ResultExt;
-use std::io::{stdout, Cursor, SeekFrom, Write};
+use std::io::{Cursor, SeekFrom, Write};
 use std::mem::take;
 use std::net::SocketAddr;
 use std::ops::DerefMut;
 use std::path::{Path};
-use dicom::dump::DumpOptions;
 use dicom::object::mem::InMemElement;
 use dicom_dictionary_std::tags;
 use dicom_dictionary_std::uids;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::StreamExt;
 use futures::stream::FusedStream;
 use tokio::io::{AsyncSeekExt, AsyncWrite};
 use tracing::{debug, warn};
@@ -143,7 +141,7 @@ impl<A> Association<A>
 		}
 	}
 	pub async fn receive_response(&mut self, source_rq: RequestCode) -> Result<msg::Response>
-		where Self: Sized + ReceiveMessage
+		where Self:ReceiveMessage
 	{
 		match self.receive_message().await
 			.with_whatever_context::<_,_,DimseError>(|e|
@@ -164,22 +162,22 @@ impl<A> Association<A>
 			}
 		}
 	}
-	pub fn new_request(&self, command: RequestCode, sop_class:impl ToString, attr: impl IntoIterator<Item=InMemElement>) -> Result<Request>
-		where Self: SendPayload
+	pub fn new_request(&self, command: RequestCode, sop_class:impl ToString, attr: impl IntoIterator<Item=InMemElement>)
+		-> Result<Request> where Self: SendPayload
 	{
 		self.context.find_pc(sop_class)
 			.map(|ctx|Request::new(command, ctx, attr))
 	}
-	pub async fn find(&mut self, level: RetrieveLevel, attr:impl IntoIterator<Item = InMemElement>) -> Result<impl FusedStream<Item=Result<InMemDicomObject>>>
-		where Self: ReceiveMessage + SendPayload + Unpin
+	pub async fn find(&'_ mut self, level: RetrieveLevel, attr:impl IntoIterator<Item = InMemElement>)
+		-> Result<PendingReceive<'_, A>> where Self: ReceiveMessage + SendPayload + Unpin
 	{
 		let rq = self.new_request(C_FIND, uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND, vec![])?
 			.with_identifier(attr.into_iter().chain([InMemElement::new(tags::QUERY_RETRIEVE_LEVEL,VR::CS,level.as_ref())]));
 
 		self.send_request(rq).await.map(|_|PendingReceive::new(self, C_FIND))
 	}
-	pub async fn collect_abstract_syntax(&mut self, filter:impl IntoIterator<Item = InMemElement>) -> Result<impl FusedStream<Item=Result<String>>>
-		where Self: ReceiveMessage + SendPayload + Unpin
+	pub async fn collect_abstract_syntax(&mut self, filter:impl IntoIterator<Item = InMemElement>)
+		-> Result<impl FusedStream<Item=Result<String>>> where Self: ReceiveMessage + SendPayload + Unpin
 	{
 		let attr = filter.into_iter().chain([
 			InMemElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::Empty),
@@ -189,8 +187,8 @@ impl<A> Association<A>
 			.map(|o|o.and_then(|mut o|Taker::take(&mut o, tags::SOP_CLASS_UID))))
 	}
 
-	pub async fn move_study(&mut self, uid:impl AsRef<str>, dest_aet:impl AsRef<str>) -> Result<impl FusedStream<Item=Result<InMemDicomObject>>>
-		where Self: ReceiveMessage + SendPayload + Unpin
+	pub async fn move_study(&mut self, uid:impl AsRef<str>, dest_aet:impl AsRef<str>)
+		-> Result<PendingReceive<'_, A>> where Self: ReceiveMessage + SendPayload + Unpin
 	{
 		let rq = self.new_request(C_MOVE, uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE, vec![
 			InMemElement::new(tags::MOVE_DESTINATION,VR::AE, dest_aet.as_ref()),
@@ -259,16 +257,14 @@ impl<A> Association<A>
 				MessageType::Response(resp) => { // either pending or finish (or fail :-( )
 					match resp.status {
 						Ok(StatusOk::Success) | Ok(StatusOk::Warning {..}) => {
-							println!("Done:");
 							return Ok(ret.unwrap());
 						}
-						Ok(StatusOk::Pending { succeeded, warn, fail, to_do }) => {
+						Ok(StatusOk::Pending { succeeded, warn, fail, to_do:_ }) => {
 							debug!("Success:{} Warning:{} Fail:{}",
 								succeeded.unwrap_or_default(), warn.unwrap_or_default(), fail.unwrap_or_default()
 							);
 						}
 						Err(e) => {
-							eprintln!("Error {e}");
 							return Err(e.into())
 						}
 					}
@@ -293,7 +289,7 @@ impl<A> SendPayload for Association<A> where A:SendPdu
 						format!("Failed sending file {} to {}: {e}",path.display(), self.local))
 			}
 			Attachment::Obj(o) => {
-				lazy_dump_to_string(&o).map(|s|debug!("{} sending object to {}:\n{s}", self.local, self.peer));
+				debug!("{} sending object to {}:\n{}", self.local, self.peer, lazy_dump_to_string(&o).unwrap());
 				let ts = self.context.select_ts(pc_id)?;
 				self.inner.send_obj(pc_id, ts, o).await
 			},

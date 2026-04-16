@@ -9,7 +9,7 @@ use dicom_ul::association::{Association};
 use dicom_ul::pdu::{PresentationContextNegotiated};
 use snafu::{prelude::*};
 use strum_macros::AsRefStr;
-use tracing::{debug, warn};
+use tracing::debug;
 use crate::association::{ReceivePdu, SendPdu, Sink};
 use crate::definitions::{QUERY_RETRIEVE_SYNTAXES, STORAGE_SYNTAXES};
 use crate::error::{DimseError, Result};

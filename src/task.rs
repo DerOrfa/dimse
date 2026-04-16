@@ -14,7 +14,7 @@ use std::sync::{Arc, RwLock};
 use dicom_ul::association::Error::ConnectionClosed;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinSet;
-use tracing::{debug, error, trace};
+use tracing::{debug, error};
 use crate::io::{get_filemeta, FileAccess};
 
 pub struct Task<B> where B:FileAccess
@@ -107,7 +107,10 @@ impl<B> Task<B> where B:FileAccess
 										_ => {panic!("Unexpected store result");}
 									}
 								},
-								Err(e) => {fail += 1;}
+								Err(e) => {
+									fail_comment = fail_comment.xor(Some(e.to_string()));
+									fail += 1;
+								}
 							}
 							to_do -= 1;
 							let resp = request.make_response(StatusOk::Pending {
@@ -174,7 +177,7 @@ impl<B> Task<B> where B:FileAccess
 		context: Context,
 		backend:B,
 		mut request: Request,
-		set:&mut JoinSet<Status>
+		set:&mut JoinSet<(u16,crate::error::Result<()>)>
 	) -> TaskHandle where B:'static, <B as FileAccess>::Item: Sync
 	{
 		let (to_task, from_dispatch) = channel(32);
@@ -183,8 +186,11 @@ impl<B> Task<B> where B:FileAccess
 		let handle = set.spawn(async move {
 			let mut task = Task::new(address, local, to_dispatch, from_dispatch, context, backend, msg_register2);
 			let result = task.process(&mut request).await;
-			task.send_payload(request.make_response(result.clone()).try_into()?).await?;
-			result
+			let result = match request.make_response(result).try_into(){
+				Ok(p) => task.send_payload(p).await,
+				Err(e) => Err(e)
+			};
+			(request.id,result)
 		});
 		TaskHandle{ data_sink: to_task, handle, msg_register }
 	}

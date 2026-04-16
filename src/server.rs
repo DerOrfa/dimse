@@ -5,7 +5,7 @@ use dicom::encoding::{TransferSyntax, TransferSyntaxIndex};
 use dicom::object::InMemDicomObject;
 use dicom::transfer_syntax::TransferSyntaxRegistry;
 use dicom_ul::{FullAeAddr, Pdu, ServerAssociationOptions};
-use dicom_ul::association::{AsyncAssociation,AsyncServerAssociation};
+use dicom_ul::association::AsyncServerAssociation;
 use snafu::ResultExt;
 use tokio::io::AsyncSeekExt;
 use tokio::net::TcpStream;

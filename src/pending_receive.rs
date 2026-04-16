@@ -6,18 +6,17 @@ use crate::error::{DimseError, Result};
 use futures::Stream;
 use futures::stream::FusedStream;
 use snafu::ResultExt;
-use tracing::{debug, error, trace, warn};
+use tracing::{error, trace, warn};
 use crate::definitions::{RequestCode, StatusOk};
-use crate::error::DimseError::UnexpectedEmptyMsg;
 use crate::payload::Attachment;
 
-pub(crate) struct PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin {
+pub struct PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin {
 	ass:&'a mut Association<A>,
 	request:RequestCode,
-	succeeded:Option<u16>,
-	warn:Option<u16>,
-	failed:Option<u16>,
-	to_do:Option<u16>,
+	pub succeeded:Option<u16>,
+	pub warn:Option<u16>,
+	pub failed:Option<u16>,
+	pub to_do:Option<u16>,
 	terminated:bool,
 }
 
@@ -51,7 +50,7 @@ impl<A> Stream for PendingReceive<'_,A> where Association<A>:ReceiveMessage + Un
 						this.to_do = to_do;
 						r.into_attachment()
 					},
-					Ok(StatusOk::Warning{ code, offending_element, comment }) => {
+					Ok(StatusOk::Warning{ code, offending_element:_, comment }) => {
 						match comment {
 							None => warn!("received warning from {}: {code}", this.ass.peer),
 							Some(c) => warn!("received warning from {}: {code} ({c})", this.ass.peer),
@@ -79,12 +78,7 @@ impl<A> Stream for PendingReceive<'_,A> where Association<A>:ReceiveMessage + Un
 		}
 	}
 	fn size_hint(&self) -> (usize, Option<usize>){
-		match self.to_do {
-			Some(to_do) => {
-				(0, Some(to_do as usize))
-			},
-			_ => (0, None),
-		}
+		(0, self.to_do.map(|d| d as usize))
 	}
 }
 

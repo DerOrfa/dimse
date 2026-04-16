@@ -4,7 +4,7 @@ use std::fs::File;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
-use tracing::{info, debug, error, Level};
+use tracing::{info, error, Level};
 use dimse::client::Client;
 use clap::builder::{PossibleValue};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -165,11 +165,11 @@ async fn main() -> dimse::error::Result<()>
 			let progress = ProgressBar::no_length();
 			progress.set_style(ProgressStyle::with_template("[Scanning studies] {wide_bar} {pos}/{len}").unwrap());
 			while let Some(obj) = found.next().await.transpose()? {
-				progress.set_message("Moving");
 				if let Some(s) = found.size_hint().1 {
 					progress.set_length(progress.position() + s as u64)
 				}
 				progress.inc(1);
+				instances.push(obj);
 			}
 			progress.finish_and_clear();
 			instances.sort_by_key::<String,_>(|o|Taker::get(o,tags::CONTENT_TIME).unwrap());
@@ -206,7 +206,7 @@ async fn main() -> dimse::error::Result<()>
 			let mut mover = client.move_study(uid, aet.clone()).await?;
 			progress.set_style(ProgressStyle::with_template(["[Moving {len} files to ",&aet,"] {wide_bar} {eta}"].concat().as_str()).unwrap());
 			while let Some(_) = mover.next().await.transpose()?{
-				if let Some(s) = mover.size_hint().1 {
+				if let Some(s) = mover.to_do {
 					progress.set_length(progress.position() + s as u64)
 				}
 				progress.inc(1);

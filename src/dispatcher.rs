@@ -8,7 +8,6 @@ use tokio::sync::mpsc::{channel, Sender};
 use tokio::task::{JoinSet};
 use tracing::{debug, error, info, trace, warn};
 use crate::association::{Association, SendPayload};
-use crate::definitions::Status;
 use crate::error::DimseError::UnexpectedResponse;
 use crate::io::FileAccess;
 use crate::msg::{Message, MessageType};
@@ -27,7 +26,7 @@ pub struct Dispatcher<B>  where B:FileAccess + 'static
 	ass:Association<Server>,
 	state:OpenState,
 	tasks:HashMap<u16,TaskHandle>,
-	join_set:JoinSet<Status>,
+	join_set:JoinSet<(u16, Result<()>)>,
 	file_access:B
 }
 
@@ -44,13 +43,19 @@ impl<B> Dispatcher<B> where B:FileAccess
 		})
 	}
 
-	async fn check_tasks(set: &mut JoinSet<Status>) {
-		match poll_fn(move |cx|set.poll_join_next(cx)).await
+	async fn check_tasks(set: &mut JoinSet<(u16,Result<()>)>) -> Result<Option<u16>>
+	{
+		match poll_fn(move |cx|set.poll_join_next(cx)).await.transpose()?
 		{
-			None => (),
-			Some(Ok(Ok(e))) => trace!("Task returned success {}", e.as_ref()),
-			Some(Ok(Err(f))) => trace!("Task failed with {f}"),
-			Some(Err(e)) => trace!("{e}"),
+			None => Ok(None),
+			Some((id,Ok(_))) => {
+				trace!("Task {id} successfully completed");
+				Ok(Some(id))
+			},
+			Some((id,Err(f))) => {
+				trace!("Task {id} failed with {f}");
+				Err(f)
+			},
 		}
 	}
 	async fn next(&mut self, sink: &Sender<Payload>) -> Result<()> where <B as FileAccess>::Item: Sync{
@@ -64,7 +69,10 @@ impl<B> Dispatcher<B> where B:FileAccess
 						self.state = OpenState::Closing;
 						None
 					},
-					_ = Self::check_tasks(&mut self.join_set), if !self.join_set.is_empty() => None,
+					id = Self::check_tasks(&mut self.join_set), if !self.join_set.is_empty() => {
+						if let Ok(Some(id)) = id{self.tasks.remove(&id);}
+						None
+					},
 				}
 			},
 			OpenState::Closing => { // see if there is some stuff left
@@ -82,6 +90,10 @@ impl<B> Dispatcher<B> where B:FileAccess
 				}
 			}// closing, but still accepting input
 			OpenState::Closed => {
+				for (id, t) in &self.tasks{
+					warn!("Killing stuck task {id}");
+					t.handle.abort();
+				}
 				return Ok(())
 			}, // actually should never happen, as outer tool terminates on "Closed"
 		};

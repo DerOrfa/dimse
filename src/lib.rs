@@ -23,7 +23,7 @@ use dicom_ul::{FullAeAddr};
 use snafu::ResultExt;
 use tokio::net::TcpListener;
 use tokio::sync::watch::Sender;
-use tracing::{debug, error, trace};
+use tracing::{error, trace};
 use crate::error::Result;
 use crate::dispatcher::Dispatcher;
 use crate::io::FileAccess;
