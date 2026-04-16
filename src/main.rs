@@ -14,7 +14,6 @@ use dicom_dictionary_std::{tags, StandardSopClassDictionary};
 use comfy_table::{Cell, ContentArrangement, Table};
 use comfy_table::Attribute::Dim;
 use dicom::core::dictionary::{UidDictionary, UidDictionaryEntry};
-use dicom::dump::DumpOptions;
 use dicom::transfer_syntax::{TransferSyntaxIndex, TransferSyntaxRegistry};
 use dicom_ul::AeAddr;
 use futures::{StreamExt, TryStreamExt};
@@ -166,10 +165,11 @@ async fn main() -> dimse::error::Result<()>
 			let progress = ProgressBar::no_length();
 			progress.set_style(ProgressStyle::with_template("[Scanning studies] {wide_bar} {pos}/{len}").unwrap());
 			while let Some(obj) = found.next().await.transpose()? {
-				if let Some(s) = found.size_hint().1{
-					progress.set_length(s as u64)
+				progress.set_message("Moving");
+				if let Some(s) = found.size_hint().1 {
+					progress.set_length(progress.position() + s as u64)
 				}
-				instances.push(obj);
+				progress.inc(1);
 			}
 			progress.finish_and_clear();
 			instances.sort_by_key::<String,_>(|o|Taker::get(o,tags::CONTENT_TIME).unwrap());
@@ -202,16 +202,16 @@ async fn main() -> dimse::error::Result<()>
 			sp.finish_and_clear();
 
 			let progress = ProgressBar::no_length();
-			progress.set_style(ProgressStyle::with_template("[{msg}] {wide_bar} {pos}/{len}").unwrap());
-			progress.set_message("Initiating move");
-			let mut mover = client.move_study(uid, aet).await?;
+			progress.set_style(ProgressStyle::with_template("[Initiating move] {wide_bar} {pos}/{len}").unwrap());
+			let mut mover = client.move_study(uid, aet.clone()).await?;
+			progress.set_style(ProgressStyle::with_template(["[Moving {len} files to ",&aet,"] {wide_bar} {eta}"].concat().as_str()).unwrap());
 			while let Some(_) = mover.next().await.transpose()?{
-				progress.set_message("Moving");
-				if let Some(s) = mover.size_hint().1{
-					progress.set_length(s as u64)
+				if let Some(s) = mover.size_hint().1 {
+					progress.set_length(progress.position() + s as u64)
 				}
+				progress.inc(1);
 			}
-			progress.finish_and_clear();
+			progress.finish();
 		}
 		Commands::Store { pattern } => {
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;

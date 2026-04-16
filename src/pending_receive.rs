@@ -79,9 +79,9 @@ impl<A> Stream for PendingReceive<'_,A> where Association<A>:ReceiveMessage + Un
 		}
 	}
 	fn size_hint(&self) -> (usize, Option<usize>){
-		match (self.succeeded, self.warn, self.failed,self.to_do) {
-			(Some(succeeded),Some(warn),Some(fail),Some(to_do)) => {
-				(0, Some((succeeded+warn+fail+to_do) as usize))
+		match self.to_do {
+			Some(to_do) => {
+				(0, Some(to_do as usize))
 			},
 			_ => (0, None),
 		}
