@@ -284,18 +284,18 @@ impl Message
 			Attachment::None => 0x0101,
 			_ => 0x0000,
 		};
-		self.obj.put(DataElement::new(tags::COMMAND_DATA_SET_TYPE,VR::US,dicom_value!(U16,att_code)));
-		self.obj.write_dataset_with_ts(&mut data, &IMPLICIT_VR_LITTLE_ENDIAN.erased())
-			.with_whatever_context::<_,_,DimseError>(|e|
-				format!("Preparation of message for sending failed ({e})"))?;
-
 		let title = match Taker::get_opt(&self.obj, tags::COMMAND_FIELD)? as Option<u16> {
 			Some(e) if (e & 0x8000) == 0 => "request",
 			Some(_) => "response to",
 			None => "message",
 		};
-
-		debug!("Preparing {title} {} to be sent\n{}", self,lazy_dump_to_string(&self.obj).unwrap_or("".to_string()));
+		self.obj.put(DataElement::new(tags::COMMAND_DATA_SET_TYPE,VR::US,dicom_value!(U16,att_code)));
+		debug!("Preparing {title} {self} to be sent");
+		let obj = InMemDicomObject::command_from_element_iter(self.obj.into_iter());
+		lazy_dump_to_string(&obj).and_then(|s|Some(debug!("{s}")));
+		obj.write_dataset_with_ts(&mut data, &IMPLICIT_VR_LITTLE_ENDIAN.erased())
+			.with_whatever_context::<_,_,DimseError>(|e|
+				format!("Preparation of message for sending failed ({e})"))?;
 
 		let command = PDataValue {
 			presentation_context_id:self.pc_id,
