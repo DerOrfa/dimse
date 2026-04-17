@@ -4,7 +4,7 @@ use dicom::object::Tag;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use strum_macros::{AsRefStr, Display};
 use thiserror::Error;
-use tracing::error;
+use tracing::{error, warn};
 use crate::error::DimseError;
 
 /// A list of supported abstract syntaxes for storage services
@@ -197,14 +197,30 @@ pub fn match_status(code:u16) -> Status
 {
 	match code {
 		0x0000 => Ok(StatusOk::Success),
-		0x0001 ..= 0x00FF => 
-			StatusWarning::try_from(code).expect("invalid status code").into(),
+		0x0001 ..= 0x00FF =>
+			StatusWarning::try_from(code).unwrap_or_else(|_|{
+				warn!("unknown warning code: {code:04X}");
+				StatusWarning::Warning
+			}).into(),
 		0xFF00 ..= 0xFFFF =>  
 			Ok(StatusOk::Pending{succeeded: None,warn: None,fail: None,to_do: None,}),
-		0xA700 ..= 0xA7ff | 0xA900 ..= 0xA9ff | 0xC000 ..= 0xCfff  => 
-			FailureCode::try_from(code).expect("invalid status code").into(),
+		0xA700 ..= 0xA7ff =>
+			FailureCode::try_from(code).unwrap_or_else(|_|{
+				warn!("unknown error code: {code:04X} of category {}", FailureCode::OutOfResources.to_string());
+				FailureCode::OutOfResources
+			}).into(),
+		0xA900 ..= 0xA9ff =>
+			FailureCode::try_from(code).unwrap_or_else(|_|{
+				warn!("unknown error code: {code:04X} of category {}", FailureCode::SOPClassDoesNotMatch.to_string());
+				FailureCode::SOPClassDoesNotMatch
+			}).into(),
+		0xC000 ..= 0xCfff  =>
+			FailureCode::try_from(code).unwrap_or_else(|_|{
+				warn!("unknown error code: {code:04X} of category {}", FailureCode::CannotUnderstand.to_string());
+				FailureCode::CannotUnderstand
+			}).into(),
 		_ => {
-			error!("Unknown error code: {:04X}", code);
+			error!("Unknown error code: {code:04X}");
 			Err(StatusFailure{code: FailureCode::CannotUnderstand,offending_element: None,comment: None})
 
 		}
