@@ -16,7 +16,7 @@ use dicom::transfer_syntax::entries::IMPLICIT_VR_LITTLE_ENDIAN;
 use dicom_dictionary_std::tags;
 use dicom_ul::pdu::{PDataValue, PDataValueType, PresentationContextNegotiated};
 use snafu::ResultExt;
-use tracing::debug;
+use tracing::{debug, warn};
 use crate::context::Context;
 use crate::error::DimseError::{IncompleteMsg, UnexpectedEmptyMsg};
 
@@ -42,8 +42,6 @@ pub struct Message
 #[derive(Clone,Debug)]
 pub struct Request
 {
-	/// AFFECTED_SOP_INSTANCE_UID
-	sop_class:String,
 	/// PRIORITY
 	pub priority:u16,
 	inner: Message,
@@ -111,7 +109,6 @@ impl TryInto<Payload> for Request
 		let code = dicom_value!(U16, self.inner.command.clone().into());
 		self.inner.obj.put(DataElement::new(tags::COMMAND_FIELD, VR::US, code));
 		self.inner.obj.put(DataElement::new(tags::MESSAGE_ID, VR::US,dicom_value!(self.inner.id)));
-		self.inner.obj.put(DataElement::new(tags::AFFECTED_SOP_CLASS_UID,VR::UI, self.sop_class));
 		self.inner.obj.put(DataElement::new(tags::PRIORITY,VR::US, dicom_value!(self.priority)));
 		self.inner.into_payload()
 	}
@@ -164,7 +161,7 @@ impl Message
 		if !data.last().unwrap().is_last{return Err(IncompleteMsg)}
 
 		// figure out transfer syntax
-		let pc_id= context.select_pc(data[0].presentation_context_id).id;
+		let pc= context.select_pc(data[0].presentation_context_id);
 		// flatten input vector
 		let input = data.into_iter().fold(vec![],|mut i,mut d|{
 			i.append(&mut d.data);
@@ -177,6 +174,11 @@ impl Message
 		let mut obj = InMemDicomObject::read_dataset_with_ts(Cursor::new(input),&IMPLICIT_VR_LITTLE_ENDIAN.erased())?;
 
 		let command_code:u16 = Taker::take(&mut obj, tags::COMMAND_FIELD)?;
+		if let Some(sop_class) = Taker::get_opt(&obj,tags::AFFECTED_SOP_CLASS_UID)? as Option<String>{
+			if sop_class != pc.abstract_syntax{
+				warn!("{} in the message body does not match the messages context id {}",tags::AFFECTED_SOP_CLASS_UID, pc.abstract_syntax);
+			}
+		}
 		let is_request = (command_code & 0x8000) == 0;
 		let command = (command_code & !0x8000).try_into()
 			.with_whatever_context::<_,_,DimseError>(|e|
@@ -186,10 +188,9 @@ impl Message
 		let ret:MessageType = if is_request
 		{
 			MessageType::Request(Request{
-				sop_class: Taker::take(&mut obj,tags::AFFECTED_SOP_CLASS_UID)?,
 				priority: Taker::take_opt(&mut obj, tags::PRIORITY)?.unwrap_or(0),
 				inner: Message {
-					command, pc_id,
+					command, pc_id:pc.id,
 					id: Taker::take(&mut obj, tags::MESSAGE_ID)?,
 					obj, attachment:Attachment::None,
 				},
@@ -214,7 +215,7 @@ impl Message
 			}
 			MessageType::Response(Response{
 				inner: Message {
-					command, pc_id,
+					command, pc_id:pc.id,
 					id: Taker::take(&mut obj, tags::MESSAGE_ID_BEING_RESPONDED_TO)?,
 					obj, attachment:Attachment::None,
 				},
@@ -274,9 +275,9 @@ impl Message
 		};
 		Ok(())
 	}
-	pub fn abstract_syntax<A>(&self,ass: &Association<A>) -> String
+	pub fn abstract_syntax<'a,A>(&self,ass: &'a Association<A>) -> &'a str
 	{
-		ass.context.select_pc(self.pc_id).abstract_syntax.clone()
+		ass.context.select_pc(self.pc_id).abstract_syntax.as_str()
 	}
 	pub fn into_payload(mut self) -> crate::Result<Payload>{
 		let mut data = Vec::new();
@@ -309,13 +310,17 @@ impl Message
 impl Request {
 	pub fn new(command: RequestCode, ctx:&PresentationContextNegotiated, attr: impl IntoIterator<Item=InMemElement>) -> Request
 	{
+		let mut obj = InMemDicomObject::command_from_element_iter(attr);
+		if obj.get(tags::AFFECTED_SOP_INSTANCE_UID).is_none(){
+			obj.put_str(tags::AFFECTED_SOP_CLASS_UID,VR::UI, ctx.abstract_syntax.clone());
+		}
+
 		Request{
-			sop_class:ctx.abstract_syntax.clone(),
 			priority: 0,
 			inner: Message {
 				command, pc_id:ctx.id,
 				id: rand::random::<u16>(),
-				obj: InMemDicomObject::command_from_element_iter(attr),
+				obj,
 				attachment: Attachment::None,
 			},
 		}

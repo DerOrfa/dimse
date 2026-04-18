@@ -94,7 +94,7 @@ impl<B> Task<B> where B:FileAccess
 					} else {
 						let (mut succeeded,mut warn,mut fail,mut to_do) = (0,0,0,instances.len() as u16);
 						for instance in instances {
-							let resp = self.c_store(request.abstract_syntax(&self.assoc), &instance).await;
+							let resp = self.c_store(request.pc_id, &instance).await;
 							match &resp{
 								Ok(s) => {
 									match s {
@@ -144,7 +144,7 @@ impl<B> Task<B> where B:FileAccess
 		}
 	}
 
-	async fn c_store(&mut self, abstract_syntax:String, instance: &B::Item) -> Status
+	async fn c_store(&mut self, pc_id: u8, instance: &B::Item) -> Status
 	{
 
 		let file = self.backend.get_path(&instance).await?;
@@ -153,6 +153,7 @@ impl<B> Task<B> where B:FileAccess
 			error!(err);
 			StatusFailure::new(FailureCode::ProcessingFailure, Some(err))
 		})?;
+		let abstract_syntax = self.context.select_pc(pc_id).abstract_syntax.as_str();
 		if meta.media_storage_sop_class_uid() != abstract_syntax {
 			return Err(StatusFailure {
 				code: FailureCode::SOPClassDoesNotMatch,
