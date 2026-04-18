@@ -122,26 +122,27 @@ async fn main() -> dimse::error::Result<()>
 
 			let mut table = Table::new();
 			table
-				.set_header(vec!["Name", "Date", "Time", "UID", "Abstract Syntaxes"])
+				.set_header(vec!["Name", "Date", "Time", "UID", "Abstract Syntaxes", "Instances"])
 				.set_content_arrangement(ContentArrangement::Dynamic);
 
 			let reg = StandardSopClassDictionary::default();
 			let progress = ProgressBar::new(found.len() as u64);
 			progress.set_style(ProgressStyle::with_template("[Scanning studies] {wide_bar} {pos}/{len}").unwrap());
-			for mut obj in found
+			for mut study in found
 			{
-				let abstract_syntax:Vec<_> = client.collect_abstract_syntax([
-						obj.element(tags::STUDY_INSTANCE_UID)?.to_owned(),
+				let instances:Vec<_> = client.collect_abstract_syntax([
+						study.element(tags::STUDY_INSTANCE_UID)?.to_owned(),
 					]).await?
 					.map_ok(|a|reg.by_uid(a.as_str()).map_or("<unknown>",|a|a.name))
-					.try_collect::<HashSet<_>>().await?//make entries unique
-					.into_iter().collect();
+					.try_collect().await?;
+				let len = instances.len();
+				let syntaxes:Vec<_> = instances.into_iter().collect::<HashSet<_>>().into_iter().collect();
 
 				let row = [tags::PATIENT_NAME, tags::STUDY_DATE, tags::STUDY_TIME, tags::STUDY_INSTANCE_UID].into_iter()
-					.map(|t|obj.take(t).map(|t|t.to_str().as_deref().unwrap_or("<INVALID ELEMENT>").to_string()))
+					.map(|t| study.take(t).map(|t|t.to_str().as_deref().unwrap_or("<INVALID ELEMENT>").to_string()))
 					.map(|t|t.unwrap_or("<EMPTY>".into()))
 					.map(Cell::new);
-				let row = row.chain([Cell::new(abstract_syntax.join("\n"))]);
+				let row = row.chain([Cell::new(syntaxes.join("\n")), Cell::new(len)]);
 				table.add_row(row);
 				progress.inc(1);
 			}
@@ -206,10 +207,10 @@ async fn main() -> dimse::error::Result<()>
 			let mut mover = client.move_study(uid, aet.clone()).await?;
 			progress.set_style(ProgressStyle::with_template(["[Moving {len} files to ",&aet,"] {wide_bar} {eta}"].concat().as_str()).unwrap());
 			while let Some(_) = mover.next().await.transpose()?{
+				progress.inc(1);
 				if let Some(s) = mover.to_do {
 					progress.set_length(progress.position() + s as u64)
 				}
-				progress.inc(1);
 			}
 			progress.finish();
 		}
