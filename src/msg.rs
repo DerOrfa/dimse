@@ -3,7 +3,7 @@ use std::io::Cursor;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use crate::association::{Association, ReceivePdu};
-use crate::definitions::{get_status, match_status, RequestCode, Status, StatusFailure, StatusOk};
+use crate::definitions::{get_status, match_status, RequestCode, Status, StatusFailure, StatusOk, StatusWarning};
 use crate::error::DimseError;
 use crate::payload::{Attachment, Payload};
 use crate::{io, lazy_dump_to_string, Taker};
@@ -14,6 +14,8 @@ use dicom::object::{open_file, InMemDicomObject};
 use dicom::object::mem::InMemElement;
 use dicom::transfer_syntax::entries::IMPLICIT_VR_LITTLE_ENDIAN;
 use dicom_dictionary_std::tags;
+use dicom_dictionary_std::tags::MEDIA_STORAGE_SOP_CLASS_UID;
+use dicom_dictionary_std::uids::{ENHANCED_MR_IMAGE_STORAGE, MR_IMAGE_STORAGE};
 use dicom_ul::pdu::{PDataValue, PDataValueType, PresentationContextNegotiated};
 use snafu::ResultExt;
 use tracing::{debug, warn};
@@ -250,7 +252,14 @@ impl Message
 	{
 		self.attachment= Attachment::Obj(InMemDicomObject::from_element_iter(ident));
 	}
-	pub fn attach_file(&mut self, filename:impl AsRef<Path>, context: &Context) -> crate::Result<()>
+
+	/// Attach a file to the request (e.g. C-STORE).
+	///
+	/// This will try to select the actual SOP Class and Transfer syntax of the file from the agreed on abstract syntaxes.
+	///
+	/// Failing that, it will try to fall back to ENHANCED_MR_IMAGE_STORAGE and failing that, to MR_IMAGE_STORAGE.
+	/// Hence, it might change the abstract syntax of the request.
+	pub fn attach_file(&mut self, filename:impl AsRef<Path>, context: &Context) -> crate::Result<StatusOk>
 	{
 		let filename = filename.as_ref();
 		// read metadata header
@@ -260,20 +269,34 @@ impl Message
 		self.obj.put(DataElement::new(tags::AFFECTED_SOP_INSTANCE_UID,VR::UI,meta.media_storage_sop_instance_uid()));
 
 		// see if we can send in the original transfer syntax
-		self.attachment = match context.match_file(&meta) {
-			Some(pc) => {
+		 match context.match_file(&meta) {
+			Some(pc) => { // Great, set the pc and attach the file itself
 				debug!("directly attaching file {} to the message {} using presentation context index {}",filename.display(), self.id, pc.id);
-				Attachment::File { path: filename.to_path_buf(), offset, pc_id:pc.id}
+				self.pc_id = pc.id;
+				self.attachment = Attachment::File { path: filename.to_path_buf(), offset, pc_id:pc.id};
+				Ok(StatusOk::Success)
 			}
-			None => {
+			None => { // Nope, try fallbacks
 				debug!("Attaching file {} as object to the message {}",filename.display(), self.id);
+				let pc = context
+					.find_pc(ENHANCED_MR_IMAGE_STORAGE) // Fallback to ENHANCED_MR_IMAGE_STORAGE
+					.or_else(|_|context.find_pc(MR_IMAGE_STORAGE))?; // Fallback to MR_IMAGE_STORAGE or bail
+				self.pc_id = pc.id;
 				let o = open_file(filename)
 					.with_whatever_context::<_,_,DimseError>(|e|
 						format!("Failed reading {} for attachment ({e})",filename.display()))?;
-				Attachment::Obj(o.into_inner())
+				self.attachment = Attachment::Obj(o.into_inner());
+				Ok(StatusOk::Warning {
+					code: StatusWarning::DataCoercion,
+					offending_element: Some(vec![MEDIA_STORAGE_SOP_CLASS_UID]),
+					comment: Some(format!(
+						"Instance has storage class {} but was coerced into {} with transfer syntax {}",
+						meta.media_storage_sop_instance_uid(),
+						pc.abstract_syntax, pc.transfer_syntax
+					))
+				})
 			}
-		};
-		Ok(())
+		}
 	}
 	pub fn abstract_syntax<'a,A>(&self,ass: &'a Association<A>) -> &'a str
 	{

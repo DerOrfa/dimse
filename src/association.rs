@@ -200,21 +200,20 @@ impl<A> Association<A>
 		self.send_request(rq).await.map(|_|PendingReceive::new(self,C_MOVE))
 	}
 
-	pub async fn store_file(&mut self, file:&Path) -> Result<()> where Self: SendPayload + ReceiveMessage
+	pub async fn store_file(&mut self, file:&Path) -> Result<StatusOk> where Self: SendPayload + ReceiveMessage
 	{
-		let req= self.new_request(C_STORE, uids::ENHANCED_MR_IMAGE_STORAGE,vec![])?
-			.with_file(file,&self.context)?;
+		let mut req= self.new_request(C_STORE, uids::ENHANCED_MR_IMAGE_STORAGE,vec![])?;
+		let ret = req.attach_file(file,&self.context)?;
 		self.send_request(req).await?;
 
 		loop {
 			// wait for confirmation
 			match self.receive_response(C_STORE).await?.status
 			{
-				Ok(StatusOk::Success) =>
-					return Ok(()),
-				Ok(StatusOk::Warning{ code, .. }) => {
+				Ok(StatusOk::Success) => return Ok(ret),
+				Ok(StatusOk::Warning{ code, offending_element, comment, }) => {
 					warn!("Unexpected Warning reply from c-store {code:?} ");
-					return Ok(())
+					return Ok(StatusOk::Warning{ code, offending_element, comment, })
 				},
 				Ok(StatusOk::Pending{..}) => {},
 				Err(e) =>

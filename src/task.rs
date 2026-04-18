@@ -15,7 +15,8 @@ use dicom_ul::association::Error::ConnectionClosed;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinSet;
 use tracing::{debug, error};
-use crate::io::{get_filemeta, FileAccess};
+use crate::error::DimseError::UnsupportedPC;
+use crate::io::FileAccess;
 
 pub struct Task<B> where B:FileAccess
 {
@@ -94,7 +95,7 @@ impl<B> Task<B> where B:FileAccess
 					} else {
 						let (mut succeeded,mut warn,mut fail,mut to_do) = (0,0,0,instances.len() as u16);
 						for instance in instances {
-							let resp = self.c_store(request.pc_id, &instance).await;
+							let resp = self.c_store(&instance).await;
 							match &resp{
 								Ok(s) => {
 									match s {
@@ -137,33 +138,26 @@ impl<B> Task<B> where B:FileAccess
 			RequestCode::C_FIND => {todo!()}
 			RequestCode::C_MOVE => {todo!()}
 			RequestCode::C_ECHO => {//https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.5.html
-				debug!("Got STORE request");
 				StatusOk::Success.into()
 			}
 			_ => {todo!()}
 		}
 	}
 
-	async fn c_store(&mut self, pc_id: u8, instance: &B::Item) -> Status
+	async fn c_store(&mut self, instance: &B::Item) -> Status
 	{
-
 		let file = self.backend.get_path(&instance).await?;
-		let (meta, _) = get_filemeta(&file).map_err(|e| {
-			let err = format!("Failed getting metadata for {} ({})", file.display(), e);
-			error!(err);
-			StatusFailure::new(FailureCode::ProcessingFailure, Some(err))
-		})?;
-		let abstract_syntax = self.context.select_pc(pc_id).abstract_syntax.as_str();
-		if meta.media_storage_sop_class_uid() != abstract_syntax {
-			return Err(StatusFailure {
-				code: FailureCode::SOPClassDoesNotMatch,
-				offending_element: Some(vec![tags::MEDIA_STORAGE_SOP_CLASS_UID]),
-				comment: Some(format!("media storage SOP Class UID of the file was: {}", meta.media_storage_sop_class_uid())),
-			})
-		}
 		match self.assoc.store_file(&file).await
 		{
-			Ok(_) => Ok(StatusOk::Success.into()),
+			Ok(s) => Ok(s),
+			Err(UnsupportedPC { uid, name }) => {
+				debug!("Store for C-GET failed because of unsupported storage class {name}");
+				Err(StatusFailure {
+					code: FailureCode::SOPClassDoesNotMatch,
+					offending_element: Some(vec![tags::MEDIA_STORAGE_SOP_CLASS_UID]),
+					comment: Some(format!("media storage SOP Class UID of the file was: {name} ({uid})")),
+				})
+			},
 			Err(e) => {
 				debug!("Store for C-GET failed ({e})");
 				Err(StatusFailure::new(FailureCode::Failure, Some(e.to_string())))
