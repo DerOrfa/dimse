@@ -328,6 +328,10 @@ impl Message
 		};
 		Ok(Payload {command,attachment:self.attachment})
 	}
+	pub(crate) fn take_attachment(&mut self) -> Attachment
+	{
+		std::mem::take(&mut self.attachment)
+	}
 }
 
 impl Request {
@@ -366,13 +370,4 @@ impl Request {
 			status:status.into()
 		}
 	}
-}
-
-impl Response
-{
-	pub(crate) fn into_attachment(self) -> Attachment
-	{
-		self.inner.attachment
-	}
-
 }

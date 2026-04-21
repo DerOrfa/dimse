@@ -7,7 +7,6 @@ use crate::payload::{Attachment, Payload};
 use crate::{io, Taker};
 use dicom_dictionary_std::tags;
 use dicom_ul::{FullAeAddr};
-use std::mem::take;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, RwLock};
@@ -68,7 +67,7 @@ impl<B> Task<B> where B:FileAccess
 			// https://dicom.nema.org/dicom/2013/output/chtml/part07/sect_9.3.html
 			RequestCode::C_STORE => {
 				debug!("Got STORE request");
-				if let Attachment::Obj(o) = take(&mut request.attachment){
+				if let Attachment::Obj(o) = request.take_attachment(){
 					let ts = Taker::get_opt(&o,tags::TRANSFER_SYNTAX_UID).transpose()
 						.unwrap_or(self.assoc.context.select_ts(request.pc_id).map(|s|s.uid().to_string()))
 						.map_err(|e|{
@@ -86,7 +85,7 @@ impl<B> Task<B> where B:FileAccess
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/chapter_C.html
 			RequestCode::C_GET => {
 				// https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.3.html
-				if let Attachment::Obj(o) = take(&mut request.attachment){
+				if let Attachment::Obj(o) = request.take_attachment(){
 					let instances = self.backend.lookup(o).await?;
 					let mut failed:HashSet<_> = Default::default();
 					let mut fail_comment = Option::<String>::None;

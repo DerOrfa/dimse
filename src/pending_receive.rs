@@ -37,7 +37,7 @@ impl<A> Stream for PendingReceive<'_,A> where Association<A>:ReceiveMessage + Un
 		let this = self.get_mut();
 		let polled = std::pin::pin!(this.ass.receive_response(this.request.clone())).poll(cx);
 		match polled {
-			Poll::Ready(Ok(r)) => {
+			Poll::Ready(Ok(mut r)) => {
 				let a = match r.status.clone() {
 					Ok(StatusOk::Success) => {
 						trace!("Got end signal, closing stream..");
@@ -48,14 +48,14 @@ impl<A> Stream for PendingReceive<'_,A> where Association<A>:ReceiveMessage + Un
 						this.warn = warn;
 						this.failed = fail;
 						this.to_do = to_do;
-						r.into_attachment()
+						r.take_attachment()
 					},
 					Ok(StatusOk::Warning{ code, offending_element:_, comment }) => {
 						match comment {
 							None => warn!("received warning from {}: {code}", this.ass.peer),
 							Some(c) => warn!("received warning from {}: {code} ({c})", this.ass.peer),
 						}
-						r.into_attachment()
+						r.take_attachment()
 					}
 					Err(e) => {
 						this.terminated = true;
