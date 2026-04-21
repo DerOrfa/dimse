@@ -9,7 +9,7 @@ mod task;
 mod context;
 pub(crate) mod dispatcher;
 mod server;
-mod pending_receive;
+pub mod pending_receive;
 
 use std::io::{Cursor, Read};
 use dicom::core::{DataDictionary, PrimitiveValue, Tag};

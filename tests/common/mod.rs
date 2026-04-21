@@ -53,12 +53,16 @@ impl FileAccess for NullAccess {
 	}
 }
 
-#[derive(Clone)]
-pub struct MultiFileAccess(Arc<Mutex<HashMap<String,PathBuf>>>);
+#[derive(Default,Clone)]
+pub struct MultiFileAccess{
+	instances:Arc<Mutex<HashMap<String,PathBuf>>>,
+	series:Arc<Mutex<HashMap<String,Vec<String>>>>,
+	studies:Arc<Mutex<HashMap<String,Vec<String>>>>,
+}
 
 impl MultiFileAccess {
 	pub async fn new(objs:impl IntoIterator<Item=FileDicomObject<InMemDicomObject>>) -> Result<Self, StatusFailure> {
-		let mut ret = MultiFileAccess(Default::default());
+		let mut ret = Self::default();
 		for o in objs{
 			ret.store_file(o).await?;
 		}
@@ -68,9 +72,9 @@ impl MultiFileAccess {
 
 impl Drop for MultiFileAccess {
 	fn drop(&mut self) {
-		if Arc::strong_count(&self.0) <=1
+		if Arc::strong_count(&self.instances) <=1
 		{
-			let map = self.0.lock().unwrap();
+			let map = self.instances.lock().unwrap();
 			for (_,file) in map.iter() {
 				if let Err(e) = std::fs::remove_file(file){
 					error!("Failed to remove file: {} ({e})", file.display());
@@ -88,8 +92,10 @@ impl FileAccess for MultiFileAccess {
 
 	async fn store_file(&mut self, obj: FileDicomObject<InMemDicomObject>) -> dimse::definitions::Status
 	{
-		let uid = Taker::get(&obj,tags::SOP_INSTANCE_UID)?;
-		let path= self.get_path(&uid).await?;
+		let instance = Taker::get(&obj,tags::SOP_INSTANCE_UID)?;
+		let series = Taker::get(&obj,tags::SERIES_INSTANCE_UID)?;
+		let study = Taker::get(&obj,tags::STUDY_INSTANCE_UID)?;
+		let path= self.get_path(&instance).await?;
 		let file = std::fs::File::create(path.clone())
 			.map_err(|e|StatusFailure::new(
 				FailureCode::ProcessingFailure,
@@ -101,17 +107,35 @@ impl FileAccess for MultiFileAccess {
 				FailureCode::ProcessingFailure,
 				Some(format!("writing {} failed ({e})", path.display()))
 			))?;
-		self.0.lock().unwrap().insert(uid,path);
+		self.instances.lock().unwrap().insert(instance.clone(),path.clone());
+		self.series.lock().unwrap().entry(series).or_default().push(instance.clone());
+		self.studies.lock().unwrap().entry(study).or_default().push(instance);
 		StatusOk::Success.into()
 	}
 
 	async fn lookup(&self, ident: InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
-		Taker::get(&ident,tags::SOP_INSTANCE_UID)
-			.map(|s|vec![s])
+		if let Some(instance) = Taker::get_opt(&ident,tags::SOP_INSTANCE_UID)
 			.map_err(|_| StatusFailure{
 				code: NoSuchAttribute,
 				offending_element: Some(vec![tags::SOP_INSTANCE_UID]),
 				comment: None
-			})
+			})?{
+			Ok(vec![instance])
+		} else if let Some(series) = Taker::get_opt(&ident,tags::SERIES_INSTANCE_UID)
+			.map_err(|_| StatusFailure{
+				code: NoSuchAttribute,
+				offending_element: Some(vec![tags::STUDY_INSTANCE_UID]),
+				comment: None
+		})?{
+			Ok(self.series.lock().unwrap().get::<String>(&series).unwrap().clone())
+		} else if let Some(study) = Taker::get_opt(&ident,tags::STUDY_INSTANCE_UID)
+			.map_err(|_| StatusFailure{
+				code: NoSuchAttribute,
+				offending_element: Some(vec![tags::STUDY_INSTANCE_UID]),
+				comment: None
+			})?{
+			Ok(self.series.lock().unwrap().get::<String>(&study).unwrap().clone())
+		} else { panic!("invalid ident") }
+
 	}
 }
