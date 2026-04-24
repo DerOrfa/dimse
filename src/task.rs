@@ -74,7 +74,7 @@ impl<B> Task<B> where B:FileAccess
 							error!("{e}");
 							StatusFailure::new(FailureCode::CannotUnderstand, Some(e.to_string()))
 						})?;
-					match io::make_file(o, &ts).await
+					match io::make_file(o, &ts)
 					{
 						Ok(f) => self.backend.store_file(f).await,
 						Err(e) => Err(e)
@@ -136,9 +136,7 @@ impl<B> Task<B> where B:FileAccess
 			}
 			RequestCode::C_FIND => {todo!()}
 			RequestCode::C_MOVE => {todo!()}
-			RequestCode::C_ECHO => {//https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.5.html
-				StatusOk::Success.into()
-			}
+			RequestCode::C_ECHO => StatusOk::Success.into(),
 			_ => {todo!()}
 		}
 	}

@@ -32,7 +32,7 @@ use crate::definitions::RequestCode::{C_FIND, C_GET, C_MOVE, C_STORE};
 use crate::{io, lazy_dump_to_string, msg, Taker};
 use crate::context::Context;
 
-pub(crate) enum Sink<'a>
+pub enum Sink<'a>
 {
 	Async(Box<dyn AsyncWrite + Send + Unpin + 'a>),
 	Sync(Box<dyn Write + Send + 'a>)
