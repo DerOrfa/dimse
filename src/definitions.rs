@@ -206,23 +206,22 @@ pub fn match_status(code:u16) -> Status
 			Ok(StatusOk::Pending{succeeded: None,warn: None,fail: None,to_do: None,}),
 		0xA700 ..= 0xA7ff =>
 			FailureCode::try_from(code).unwrap_or_else(|_|{
-				warn!("unknown error code: {code:04X} of category {}", FailureCode::OutOfResources.to_string());
+				warn!(r#"unknown error code: {code:04X} of category "{}""#, FailureCode::OutOfResources.to_string());
 				FailureCode::OutOfResources
 			}).into(),
 		0xA900 ..= 0xA9ff =>
 			FailureCode::try_from(code).unwrap_or_else(|_|{
-				warn!("unknown error code: {code:04X} of category {}", FailureCode::SOPClassDoesNotMatch.to_string());
+				warn!(r#"unknown error code: {code:04X} of category "{}""#, FailureCode::SOPClassDoesNotMatch.to_string());
 				FailureCode::SOPClassDoesNotMatch
 			}).into(),
 		0xC000 ..= 0xCfff  =>
 			FailureCode::try_from(code).unwrap_or_else(|_|{
-				warn!("unknown error code: {code:04X} of category {}", FailureCode::CannotUnderstand.to_string());
+				warn!(r#"unknown error code: {code:04X} of category "{}""#, FailureCode::CannotUnderstand.to_string());
 				FailureCode::CannotUnderstand
 			}).into(),
 		_ => {
 			error!("Unknown error code: {code:04X}");
 			Err(StatusFailure{code: FailureCode::CannotUnderstand,offending_element: None,comment: None})
-
 		}
 	}
 }
@@ -261,7 +260,11 @@ impl From<DimseError> for StatusFailure
 impl Display for StatusFailure{
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result
 	{
-		self.code.fmt(f)
+		let code = &self.code;
+		if let Some(c) = &self.comment{
+			f.write_fmt(format_args!(r#"Error "{code}", comment: "{c}""#))
+		} else { f.write_fmt(format_args!(r#"Error: "{code}""#)) }
+
 	}
 }
 

@@ -131,6 +131,8 @@ async fn main() -> dimse::error::Result<()>
 			for mut study in found
 			{
 				let instances:Vec<_> = client.collect_abstract_syntax([
+						InMemElement::new(tags::SOP_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
+						InMemElement::new(tags::SERIES_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
 						study.element(tags::STUDY_INSTANCE_UID)?.to_owned(),
 					]).await?
 					.map_ok(|a|reg.by_uid(a.as_str()).map_or("<unknown>",|a|a.name))
