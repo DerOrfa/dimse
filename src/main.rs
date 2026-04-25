@@ -58,7 +58,6 @@ struct Cli {
 	calling_ae:Option<String>,
 	#[command(subcommand)]
 	command: Commands,
-
 }
 
 #[derive(Subcommand)]

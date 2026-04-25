@@ -73,7 +73,7 @@ pub async fn read_pipe(source: &mut Option<Receiver<PDataValue>>, prelude: Vec<u
 	Ok(r)
 }
 
-pub async fn make_file(obj: InMemDicomObject, ts:&str) -> std::result::Result<FileDicomObject<InMemDicomObject>,StatusFailure>
+pub fn make_file(obj: InMemDicomObject, ts:&str) -> std::result::Result<FileDicomObject<InMemDicomObject>,StatusFailure>
 {
 	let file_meta = FileMetaTableBuilder::new().transfer_syntax(ts);
 	let uid = Taker::get(&obj,tags::SOP_INSTANCE_UID).ok().unwrap_or("file".to_string());

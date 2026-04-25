@@ -100,7 +100,16 @@ impl Display for Response
 impl Display for Request
 {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		Display::fmt(&self.inner, f)
+		f.write_fmt(format_args!(r#"request {}"#,&self.inner))
+	}
+}
+impl Display for MessageType
+{
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		match self {
+			MessageType::Request(r) => Display::fmt(r, f),
+			MessageType::Response(r) => Display::fmt(r, f),
+		}
 	}
 }
 impl TryInto<Payload> for Request

@@ -1,5 +1,5 @@
 use crate::definitions::StatusFailure;
-use crate::msg::Response;
+use crate::msg::{MessageType, Response};
 use crate::payload::Payload;
 use dicom_ul::Pdu;
 use snafu::prelude::*;
@@ -25,6 +25,8 @@ pub enum DimseError {
 	UnknownSOPClass{class:String},
 	#[snafu(display("Missing message id"))]
 	NoMessageID,
+	#[snafu(display("Expected message {expected}, but got {actual}"))] // @replace those below with this
+	UnexpectedMessage{expected:String, actual:MessageType},
 	#[snafu(display("Expected message type {expected}, but got {actual}"))]
 	UnexpectedMessageType{expected:String, actual:String},
 	#[snafu(display("Unexpected response {name}, don't know any related requests"))]

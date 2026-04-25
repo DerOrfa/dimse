@@ -245,7 +245,7 @@ impl<A> Association<A>
 						{
 							let ts: Option<String> = Taker::get_opt(&o, tags::TRANSFER_SYNTAX_UID)?;
 							let ts = ts.as_deref().unwrap_or(self.context.select_ts(req.pc_id)?.uid());
-							let response = io::make_file(o, ts).await.map(|o|{
+							let response = io::make_file(o, ts).map(|o|{
 								ret = Some(o);StatusOk::Success
 							});
 							let response = req.make_response(response);
