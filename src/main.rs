@@ -1,16 +1,18 @@
 use futures::Stream;
 use std::collections::HashSet;
 use std::fs::File;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
+use std::process::exit;
+use std::str::FromStr;
 use std::time::Duration;
 use tracing::{info, error, Level};
-use dimse::client::Client;
+use dimse::client::{Client, RetrieveLevel};
 use clap::builder::{PossibleValue};
 use clap::{Parser, Subcommand, ValueEnum};
 use dicom::core::{PrimitiveValue, VR};
 use dicom::object::mem::InMemElement;
-use dicom_dictionary_std::{tags, StandardSopClassDictionary};
+use dicom_dictionary_std::{tags, uids, StandardSopClassDictionary};
 use comfy_table::{Cell, ContentArrangement, Table};
 use comfy_table::Attribute::Dim;
 use dicom::core::dictionary::{UidDictionary, UidDictionaryEntry};
@@ -22,7 +24,9 @@ use dimse::error::DimseError;
 use snafu::prelude::*;
 use dimse::Taker;
 use indicatif::{ProgressBar, ProgressStyle};
-use dimse::association::Association;
+use dimse::association::{Association, SendPayload};
+use dimse::definitions::RequestCode::C_GET;
+use dimse::pending_receive::PendingStore;
 
 #[derive(Clone)]
 struct LogLevel(Level);
@@ -52,12 +56,29 @@ struct Cli {
 	#[arg(long, default_value = Level::INFO.as_str())]
 	log_level:LogLevel,
 	/// address of the PACS to connect to
+	#[arg(value_parser = socketaddr_value_parser)]
 	addr:AeAddr<SocketAddr>,
 	/// the calling AE title, default is ANY-SCU
 	#[arg(long)]
 	calling_ae:Option<String>,
 	#[command(subcommand)]
 	command: Commands,
+}
+
+
+pub(crate) fn socketaddr_value_parser(value: &str) -> Result<AeAddr<SocketAddr>, String>
+{
+	let addr = AeAddr::<String>::from_str(value).map_err(|e|e.to_string())?;
+	let aet = addr.ae_title();
+	let addr = addr.socket_addr().to_socket_addrs().map_err(|e|e.to_string())?
+		.filter(|a|a.is_ipv4())
+		.next().ok_or(String::from("Invalid address"))?
+	;
+	Ok(match aet
+	{
+		None => AeAddr::from(addr),
+		Some(ae) => AeAddr::from(addr).with_ae_title(ae).into()
+	})
 }
 
 #[derive(Subcommand)]
@@ -82,7 +103,7 @@ pub enum Commands
 		/// glob or single file dicom file to upload
 		pattern:Vec<String>
 	},
-	Get {
+	GetStudy {
 		/// glob or single file dicom file to upload
 		uid:String,
 		out:PathBuf
@@ -235,10 +256,37 @@ async fn main() -> dimse::error::Result<()>
 			}
 
 		}
-		Commands::Get { uid, out } => {
+		Commands::GetStudy { uid, out } => {
+			if !out.is_dir(){
+				eprintln!("{} is not a directory", out.display());
+				exit(1);
+			}
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
-			sp.set_message(format!(r#"Getting "{}""#, uid));
-			client.get_file(uid).await?.write_all(File::create(out)?)?;
+			sp.set_message(format!(r#"Getting study "{}""#, uid));
+			let mut sp = Some(sp);
+			let req= client.new_request(C_GET, uids::ENHANCED_MR_IMAGE_STORAGE ,vec![])?
+				.with_identifier([
+					InMemElement::new(tags::QUERY_RETRIEVE_LEVEL,VR::CS,RetrieveLevel::STUDY.as_ref()),
+					InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, uid),
+				]);
+			client.send_request(req).await?;
+			let mut response = PendingStore::new(&mut client, C_GET);
+
+			let mut progress = None;
+			while let Some(e) = response.next().await.transpose()?{
+				if let Some(len) = response.size_hint().1{
+					sp.take().map(|sp|sp.finish_and_clear());
+					progress.get_or_insert({
+						let progress = ProgressBar::new(len as u64);
+						progress.set_style(ProgressStyle::with_template(["[Downloading {pos}/{len} files to ",out.to_string_lossy().as_ref(),"] {wide_bar} {eta}"].concat().as_str()).unwrap());
+						progress
+					}).inc(1);
+				}
+				let uid = e.element(tags::SOP_INSTANCE_UID)?.to_str().unwrap();
+				let modality = e.element(tags::MODALITY)?.to_str().unwrap();
+				e.write_all(File::create(out.join(format!("{modality}.{uid}.dcm")))?)?;
+			}
+
 		}
 		Commands::Probe { } => {
 			let mut table = Table::new();
