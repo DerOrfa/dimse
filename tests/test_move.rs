@@ -1,8 +1,7 @@
-use std::fmt::format;
 use dicom::core::header::Header;
 use crate::common::dcm;
 use dicom_dictionary_std::tags;
-use dicom_dictionary_std::uids::{ENHANCED_MR_IMAGE_STORAGE, MR_IMAGE_STORAGE};
+use dicom_dictionary_std::uids;
 use dimse::client::Client;
 use dimse::Taker;
 use dimse::error::Result;
@@ -15,7 +14,7 @@ mod common;
 #[snafu::report]
 async fn test_move() -> Result<()>
 {
-	tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
+	//tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
 
 	let obj = dcm::synthesize_dicom_obj(&dcm::UidSynthesizer::default(),1,1,1);
 	let uid:String = Taker::get(&obj,tags::SOP_INSTANCE_UID)?;
@@ -27,7 +26,7 @@ async fn test_move() -> Result<()>
 
 	let (addr, watcher,_) = common::init_server(access.clone()).await?;
 
-	let mut client = Client::new(addr.into(),Some("TESTSCU"), [ENHANCED_MR_IMAGE_STORAGE])?;
+	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::ENHANCED_MR_IMAGE_STORAGE])?;
 
 	client.store_file(&path).await?;
 	let stored_path = access.get_path(&uid).await?;

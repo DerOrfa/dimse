@@ -26,7 +26,7 @@ use dicom_dictionary_std::uids;
 use futures::StreamExt;
 use futures::stream::FusedStream;
 use tokio::io::{AsyncSeekExt, AsyncWrite};
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 use crate::client::RetrieveLevel;
 use crate::definitions::RequestCode::{C_FIND, C_GET, C_MOVE, C_STORE};
 use crate::{io, lazy_dump_to_string, msg, Taker};
@@ -322,7 +322,7 @@ impl<A> ReceiveMessage for Association<A> where A:ReceivePdu {
 					}
 				};
 				if let Attachment::Obj(o) = att {
-					debug!("With attachment\n{}", lazy_dump_to_string(o).unwrap_or("".to_string()));
+					trace!("With attachment\n{}", lazy_dump_to_string(o).unwrap_or("".to_string()));
 				}
 				m
 			}).with_whatever_context(|e|format!("Failed getting message from {} ({e})", self.peer_address()))
