@@ -138,7 +138,7 @@ impl<B> Dispatcher<B> where B:FileAccess
 						// new request, start new task
 						MessageType::Request(mut req) => {
 							req.read_attachment(&mut self.ass).await?;
-							debug!("Starting task to handle request {req}");
+							debug!("Starting task to handle {req}");
 							let req_id = req.id;
 							let task = Task::spawn(
 								self.ass.peer.clone(), self.ass.local.clone(),

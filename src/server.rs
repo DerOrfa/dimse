@@ -13,7 +13,7 @@ use tokio_util::io::SyncIoBridge;
 use tracing::debug;
 use crate::association::{Association, ReceivePdu, SendPayload, SendPdu};
 use crate::error::DimseError::{TransferSyntaxNotFound};
-use crate::error::Result;
+use crate::error::{DimseError, Result};
 use crate::lazy_dump_to_string;
 use crate::msg::Request;
 use crate::payload::{Attachment, Payload};

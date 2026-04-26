@@ -38,7 +38,7 @@ pub struct Message
 	/// MESSAGE_ID_BEING_RESPONDED_TO /	MESSAGE_ID
 	pub id:u16,
 	pub obj: InMemDicomObject,
-	pub attachment: Attachment,
+	attachment: Attachment,
 }
 
 #[derive(Clone,Debug)]
@@ -341,6 +341,7 @@ impl Message
 	{
 		std::mem::take(&mut self.attachment)
 	}
+	pub(crate) fn attachment(&self) -> &Attachment {&self.attachment}
 }
 
 impl Request {
@@ -378,5 +379,18 @@ impl Request {
 			inner:self.inner.clone(),
 			status:status.into()
 		}
+	}
+}
+
+impl Response {
+	pub fn with_identifier(mut self,ident:impl IntoIterator<Item = InMemElement>) -> Self
+	{
+		self.attach(ident);
+		self
+	}
+	pub fn with_file(mut self, filename:&Path, context: &Context) -> crate::Result<Self>
+	{
+		self.attach_file(filename,context)?;
+		Ok(self)
 	}
 }

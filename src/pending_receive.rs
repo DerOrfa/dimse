@@ -193,7 +193,7 @@ impl<'a, A> Stream for PendingStore<'a, A> where Association<A>:ReceiveMessage +
 					debug!("StoreStream got {req}");
 					// ready above bails if we're pending, so this should be safe
 					let context = &this.inner.get_association().context;
-					if let Attachment::Obj(o) = std::mem::take(&mut req.attachment)
+					if let Attachment::Obj(o) = req.take_attachment()
 					{
 						let ts: Option<String> = Taker::get_opt(&o, tags::TRANSFER_SYNTAX_UID)?;
 						let ts = ts.as_deref().unwrap_or(context.select_ts(req.pc_id)?.uid());

@@ -16,7 +16,6 @@ use dicom_ul::pdu::{PDataValue, PresentationContextNegotiated};
 use dicom_ul::{FullAeAddr, Pdu};
 use snafu::ResultExt;
 use std::io::{Cursor, SeekFrom, Write};
-use std::mem::take;
 use std::net::SocketAddr;
 use std::ops::DerefMut;
 use std::path::{Path};
@@ -246,7 +245,7 @@ impl<A> Association<A>
 			{
 				MessageType::Request(mut req) => { // this should be a C_STORE request
 					if req.command == C_STORE {
-						if let Attachment::Obj(o) = take(&mut req.attachment)
+						if let Attachment::Obj(o) = req.take_attachment()
 						{
 							let ts: Option<String> = Taker::get_opt(&o, tags::TRANSFER_SYNTAX_UID)?;
 							let ts = ts.as_deref().unwrap_or(self.context.select_ts(req.pc_id)?.uid());
@@ -314,7 +313,7 @@ impl<A> ReceiveMessage for Association<A> where A:ReceivePdu {
 							self.peer,
 							lazy_dump_to_string(&r.obj).unwrap_or("".to_string())
 						);
-						&r.attachment
+						r.attachment()
 					}
 					MessageType::Response(r) => {
 						debug!("{} received {} from {}:\n{}",
@@ -323,7 +322,7 @@ impl<A> ReceiveMessage for Association<A> where A:ReceivePdu {
 							self.peer_address(),
 							lazy_dump_to_string(&r.obj).unwrap_or("".to_string())
 						);
-						&r.attachment
+						r.attachment()
 					}
 				};
 				if let Attachment::Obj(o) = att {
