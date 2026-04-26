@@ -48,8 +48,12 @@ impl FileAccess for NullAccess {
 		Err(StatusFailure{code: Failure, offending_element: None, comment: None})
 	}
 
-	async fn lookup(&self, _: InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
+	async fn lookup(&self, _: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
 		Err(StatusFailure{code: Failure, offending_element: None, comment: None})
+	}
+
+	async fn find(&self, _: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
+		Err(StatusFailure::new(FailureCode::UnrecognizedOperation,Some("Not implemented".to_string())))
 	}
 }
 
@@ -113,7 +117,7 @@ impl FileAccess for MultiFileAccess {
 		StatusOk::Success.into()
 	}
 
-	async fn lookup(&self, ident: InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
+	async fn lookup(&self, ident: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
 		if let Some(instance) = Taker::get_opt(&ident,tags::SOP_INSTANCE_UID)
 			.map_err(|_| StatusFailure{
 				code: NoSuchAttribute,
@@ -137,5 +141,19 @@ impl FileAccess for MultiFileAccess {
 			Ok(self.series.lock().unwrap().get::<String>(&study).unwrap().clone())
 		} else { panic!("invalid ident") }
 
+	}
+
+	async fn find(&self, ident: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
+		if let Some(name_glob) = Taker::get_opt(&ident,tags::PATIENT_NAME)?{
+			let lock = self.instances.lock().unwrap();
+			let found = lock.iter()
+				.map(|(uid,path)|(uid,path,dicom::object::open_file(path).unwrap()))
+				.filter(|(_,_,o)|{
+					let name:String = Taker::get(o,tags::PATIENT_NAME).unwrap();
+					glob_match::glob_match(&name_glob as &String,&name)
+				})
+				.map(|(uid,_,_)|uid.to_string());
+			Ok(found.collect())
+		} else { Err(StatusFailure::new(FailureCode::InvalidArgument, Some("Can only look up PatientName".into()))) }
 	}
 }

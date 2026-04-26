@@ -50,7 +50,8 @@ pub trait FileAccess: Clone + Send + Sync
 	type Item:Send + Sync;
 	fn get_path(&self, uid:&Self::Item) -> impl Future<Output = std::result::Result<PathBuf, StatusFailure>> + Send;
 	fn store_file(&mut self, file:FileDicomObject<InMemDicomObject>) -> impl Future<Output = Status> + Send;
-	fn lookup(&self, ident: InMemDicomObject) -> impl Future<Output = std::result::Result<Vec<Self::Item>, StatusFailure>> + Send;
+	fn lookup(&self, ident: &InMemDicomObject) -> impl Future<Output = std::result::Result<Vec<Self::Item>, StatusFailure>> + Send;
+	fn find(&self, ident: &InMemDicomObject) -> impl Future<Output = std::result::Result<Vec<Self::Item>, StatusFailure>> + Send;
 }
 
 pub async fn read_pipe(source: &mut Option<Receiver<PDataValue>>, prelude: Vec<u8>, ts:String)

@@ -10,6 +10,8 @@ use dicom_ul::{FullAeAddr};
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, RwLock};
+use dicom::core::header::{HasLength, Header};
+use dicom::object::InMemDicomObject;
 use dicom_ul::association::Error::ConnectionClosed;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinSet;
@@ -63,8 +65,6 @@ impl<B> Task<B> where B:FileAccess
 	{
 		match &request.deref().command
 		{
-			// https://dicom.nema.org/medical/dicom/current/output/chtml/part07/chapter_9.html
-			// https://dicom.nema.org/dicom/2013/output/chtml/part07/sect_9.3.html
 			RequestCode::C_STORE => {
 				debug!("Got STORE request");
 				if let Attachment::Obj(o) = request.take_attachment(){
@@ -84,9 +84,8 @@ impl<B> Task<B> where B:FileAccess
 			// Query/Retrieve Service Class
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/chapter_C.html
 			RequestCode::C_GET => {
-				// https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.3.html
 				if let Attachment::Obj(o) = request.take_attachment(){
-					let instances = self.backend.lookup(o).await?;
+					let instances = self.backend.lookup(&o).await?;
 					let mut failed:HashSet<_> = Default::default();
 					let mut fail_comment = Option::<String>::None;
 					if instances.is_empty() {return FailureCode::NoSuchSOPInstance.into();}
@@ -129,7 +128,55 @@ impl<B> Task<B> where B:FileAccess
 					}
 				} else { FailureCode::InvalidArgument.into() }
 			}
-			RequestCode::C_FIND => {todo!()}
+			RequestCode::C_FIND => {
+				if let Attachment::Obj(ident) = request.take_attachment(){
+					let instances =  self.backend.find(&ident).await?;
+					let (mut succeeded,mut warn,mut to_do) = (0,0,instances.len() as u16);
+					let mut missed_el = HashSet::new();
+					for instance in instances
+					{
+						let mut ob= dicom::object::open_file(
+							self.backend.get_path(&instance).await?
+						).map_err(|e|StatusFailure::new(FailureCode::ProcessingFailure, Some(e.to_string())))?;
+						let mut ret = InMemDicomObject::new_empty();
+						let mut do_warn =false;
+						for e in ident.iter() // got though all key attributes in the identifier
+							.filter(|e|e.tag()!=tags::QUERY_RETRIEVE_LEVEL)
+							.filter(|e|e.tag()!=tags::QUERY_RETRIEVE_VIEW)
+							.filter(|e|e.tag()!=tags::SPECIFIC_CHARACTER_SET)
+							.filter(|e|e.tag()!=tags::TIMEZONE_OFFSET_FROM_UTC)
+						{
+							// if they're in the found looked up entry, move them into the result
+							let tag = e.tag();
+							if let Some(found) = ob.take(tag) && !found.is_empty(){
+								ret.put(found);
+							} else {
+								missed_el.insert(tag);
+								do_warn=true;
+							}
+						}
+						if do_warn {warn+=1}else { succeeded+=1 }
+						to_do -= 1;
+						let resp = request.make_response(StatusOk::Pending {
+							succeeded: Some(succeeded),
+							warn: Some(warn),
+							fail: None,
+							to_do: Some(to_do),
+						}).with_identifier(ret);
+						self.assoc.send_payload(resp.try_into()?).await?;
+					}
+					if missed_el.is_empty()
+					{
+						StatusOk::Success.into()
+					} else { // todo more details
+						StatusOk::Warning {
+							code: StatusWarning::AttributeListWarning,
+							offending_element: Some(missed_el.into_iter().collect()),
+							comment: None,
+						}.into()
+					}
+				} else { FailureCode::InvalidArgument.into() }
+			}
 			RequestCode::C_MOVE => {todo!()}
 			RequestCode::C_ECHO => StatusOk::Success.into(),
 			_ => {todo!()}

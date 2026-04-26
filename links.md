@@ -11,12 +11,12 @@ The Query/Retrieve Information Model is identified by the SOP Class negotiated a
 - [Matching](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.2.2.2.html)
 
 ## [Query Retrieve Service Class ](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/chapter_C.html)
-- [Attribute Matching](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.2.2.2.html)
 - [Additional Query/Retrieve Attributes](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.3.4.html)
 
 ### C-FIND
 - [Protocol](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.2.html)
 - [Operation](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.html#sect_C.4.1)
+- [Attribute Matching](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.2.2.2.html)
 #### Message-Table
 - [C-FIND](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.2.html#table_9.3-3)
 - [C_FIND_RSP](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.2.2.html#table_9.3-4)
@@ -31,6 +31,7 @@ https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.html#t
 ## C-GET
 - [Parameters](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.3.html#sect_C.4.3.1)
 - [Behavior](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.3.2.html)
+- [Protocol](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.3.html)
 ### Response status
 - https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.3.html#table_C.4-3
 
@@ -46,6 +47,7 @@ https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.html#t
 ### C-STORE
 - [Service](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/chapter_9.html)
 - [Protocol](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.html)
+- [Parameters](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/chapter_9.html#table_9.1-1)
 - [Related General SOP Classes](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_B.3.html#sect_B.3.1.4)
 - [Conformance](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_B.4.html)
 #### [SCU Fall-Back Behavior](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_B.4.2.html#sect_B.4.2.1)
