@@ -168,6 +168,11 @@ impl<A> Association<A>
 		self.context.find_pc(sop_class)
 			.map(|ctx|Request::new(command, ctx, attr))
 	}
+	pub fn new_store_request(&self, file: impl AsRef<Path>) -> Result<Request> where Self: SendPayload
+	{
+		self.new_request(C_STORE, uids::ENHANCED_MR_IMAGE_STORAGE,vec![])?
+			.with_file(file,&self.context) // this will override the SOP Class above
+	}
 	pub async fn find(&'_ mut self, level: RetrieveLevel, attr:impl IntoIterator<Item = InMemElement>)
 		-> Result<PendingReceive<'_, A>> where Self: ReceiveMessage + SendPayload + Unpin
 	{
@@ -203,7 +208,7 @@ impl<A> Association<A>
 	pub async fn store_file(&mut self, file:&Path) -> Result<StatusOk> where Self: SendPayload + ReceiveMessage
 	{
 		let mut req= self.new_request(C_STORE, uids::ENHANCED_MR_IMAGE_STORAGE,vec![])?;
-		let ret = req.attach_file(file,&self.context)?;
+		let ret = req.attach_file(file,&self.context)?; // this will override the SOP Class above
 		self.send_request(req).await?;
 
 		loop {

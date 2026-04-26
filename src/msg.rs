@@ -268,7 +268,7 @@ impl Message
 	///
 	/// Failing that, it will try to fall back to ENHANCED_MR_IMAGE_STORAGE and failing that, to MR_IMAGE_STORAGE.
 	/// Hence, it might change the abstract syntax of the request.
-	pub fn attach_file(&mut self, filename:impl AsRef<Path>, context: &Context) -> crate::Result<StatusOk>
+	pub fn attach_file(&mut self, filename:impl AsRef<Path>, context: &Context) -> Status
 	{
 		let filename = filename.as_ref();
 		// read metadata header
@@ -366,7 +366,7 @@ impl Request {
 		self.attach(ident);
 		self
 	}
-	pub fn with_file(mut self, filename:&Path, context: &Context) -> crate::Result<Self>
+	pub fn with_file(mut self, filename: impl AsRef<Path>, context: &Context) -> crate::Result<Self>
 	{
 		self.attach_file(filename,context)?;
 		Ok(self)

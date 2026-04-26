@@ -228,6 +228,10 @@ impl<A> FusedStream for PendingReceive<'_, A>  where Association<A>:ReceiveMessa
 {
 	fn is_terminated(&self) -> bool{self.terminated}
 }
+impl<A> FusedStream for PendingStore<'_, A>  where Association<A>:ReceiveMessage + SendPayload + Unpin
+{
+	fn is_terminated(&self) -> bool{self.inner.terminated}
+}
 
 impl<'a,A> Drop for PendingReceive<'_, A>  where Association<A>:ReceiveMessage + Unpin
 {

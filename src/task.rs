@@ -89,48 +89,43 @@ impl<B> Task<B> where B:FileAccess
 					let instances = self.backend.lookup(o).await?;
 					let mut failed:HashSet<_> = Default::default();
 					let mut fail_comment = Option::<String>::None;
-					if instances.is_empty() {
-						FailureCode::NoSuchSOPInstance.into()
-					} else {
-						let (mut succeeded,mut warn,mut fail,mut to_do) = (0,0,0,instances.len() as u16);
-						for instance in instances {
-							let resp = self.c_store(&instance).await;
-							match &resp{
-								Ok(s) => {
-									match s {
-										StatusOk::Success => {succeeded += 1;},
-										StatusOk::Warning { offending_element, comment, .. } => {
-											warn += 1;
-											for e in offending_element.iter().flatten(){failed.insert(*e);	}
-											fail_comment = fail_comment.xor(comment.clone());
-										}
-										_ => {panic!("Unexpected store result");}
+					if instances.is_empty() {return FailureCode::NoSuchSOPInstance.into();}
+					
+					let (mut succeeded,mut warn,mut fail,mut to_do) = (0,0,0,instances.len() as u16);
+					for instance in instances {
+						match self.c_store(&instance).await{
+							Ok(s) => {
+								match s {
+									StatusOk::Success => {succeeded += 1;},
+									StatusOk::Warning { offending_element, comment, .. } => {
+										warn += 1;
+										for e in offending_element.iter().flatten(){failed.insert(*e);	}
+										fail_comment = fail_comment.xor(comment.clone());
 									}
-								},
-								Err(e) => {
-									fail_comment = fail_comment.xor(Some(e.to_string()));
-									fail += 1;
+									_ => {panic!("Unexpected store result");}
 								}
+							},
+							Err(e) => {
+								fail_comment = fail_comment.xor(Some(e.to_string()));
+								fail += 1;
 							}
-							to_do -= 1;
-							let resp = request.make_response(StatusOk::Pending {
-								succeeded: Some(succeeded),
-								warn: Some(warn),
-								fail: Some(fail),
-								to_do: Some(to_do),
-							});
-							self.assoc.send_payload(resp.try_into()?).await?;
 						}
-						if failed.is_empty()
-						{
-							StatusOk::Success.into()
-						} else { // todo more details
-							StatusOk::Warning {
-								code: StatusWarning::AttributeListWarning,
-								offending_element: if failed.is_empty(){None} else {Some(failed.into_iter().collect())},
-								comment: fail_comment,
-							}.into()
-						}
+						to_do -= 1;
+						let resp = request.make_response(StatusOk::Pending {
+							succeeded: Some(succeeded),
+							warn: Some(warn),
+							fail: Some(fail),
+							to_do: Some(to_do),
+						});
+						self.assoc.send_payload(resp.try_into()?).await?;
+					}
+					if failed.is_empty(){StatusOk::Success.into()}
+					else { // todo more details
+						StatusOk::Warning {
+							code: StatusWarning::AttributeListWarning,
+							offending_element: if failed.is_empty(){None} else {Some(failed.into_iter().collect())},
+							comment: fail_comment,
+						}.into()
 					}
 				} else { FailureCode::InvalidArgument.into() }
 			}
@@ -148,7 +143,7 @@ impl<B> Task<B> where B:FileAccess
 		{
 			Ok(s) => Ok(s),
 			Err(UnsupportedPC { uid, name }) => {
-				debug!("Store for C-GET failed because of unsupported storage class {name}");
+				debug!("Store failed because of unsupported storage class {name}");
 				Err(StatusFailure {
 					code: FailureCode::SOPClassDoesNotMatch,
 					offending_element: Some(vec![tags::MEDIA_STORAGE_SOP_CLASS_UID]),
