@@ -71,7 +71,12 @@ impl ReceivePdu for Server {
 
 impl SendPdu for Server {
 	async fn send_obj(&mut self, pc_id: u8, ts: &TransferSyntax, o: InMemDicomObject) -> Result<()> {
-		o.write_dataset_with_ts(SyncIoBridge::new(self.0.send_pdata(pc_id)),ts)
+		let mut sink = self.0.send_pdata(pc_id);
+		let mut source = Cursor::new(Vec::new());
+		o.write_dataset_with_ts(&mut source, ts)
+			.with_whatever_context::<_,_,DimseError>(|e|format!("Failed sending object: {e}"))?;
+		source.seek(SeekFrom::Start(0)).await?;
+		tokio::io::copy(&mut source, &mut sink).await.map(|_|())
 			.with_whatever_context(|e|format!("Failed sending object: {e}"))
 	}
 
