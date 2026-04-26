@@ -97,7 +97,7 @@ impl<'a,A> PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin
 				trace!("Got end signal, closing stream..");
 				self.terminated=true;return Ok(None)
 			},
-			Ok(StatusOk::Pending{ succeeded, warn, fail, to_do }) => {
+			Ok(StatusOk::Pending{ succeeded, warn, fail, to_do, .. }) => {
 				self.succeeded = succeeded;
 				self.warn = warn;
 				self.failed = fail;

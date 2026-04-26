@@ -84,11 +84,9 @@ pub fn make_file(obj: InMemDicomObject, ts:&str) -> std::result::Result<FileDico
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_b.2.3.html
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part07/chapter_9.html
 			error!("Error {e} when preparing received data for storage");
-			Err(StatusFailure{
-				code:FailureCode::ProcessingFailure,
-				offending_element: None,
-				comment: Some(format!("Failed storing {uid}:({e})")),
-			})
+			Err(StatusFailure::new(FailureCode::ProcessingFailure,
+				Some(format!("Failed storing {uid}:({e})")),0)
+			)
 		}
 	}
 }

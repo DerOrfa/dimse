@@ -262,7 +262,7 @@ impl<A> Association<A>
 						Ok(StatusOk::Success) | Ok(StatusOk::Warning {..}) => {
 							return Ok(ret.unwrap());
 						}
-						Ok(StatusOk::Pending { succeeded, warn, fail, to_do:_ }) => {
+						Ok(StatusOk::Pending { succeeded, warn, fail, .. }) => {
 							debug!("Success:{} Warning:{} Fail:{}",
 								succeeded.unwrap_or_default(), warn.unwrap_or_default(), fail.unwrap_or_default()
 							);

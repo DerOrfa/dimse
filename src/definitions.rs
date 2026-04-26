@@ -93,6 +93,7 @@ pub enum StatusOk
 		warn:Option<u16>,
 		fail:Option<u16>,
 		to_do:Option<u16>,
+		offset:u16,
 	},
 	Warning{
 		code:StatusWarning,
@@ -101,15 +102,24 @@ pub enum StatusOk
 	},
 }
 
+impl StatusOk {
+	pub fn new_success() -> Self {StatusOk::Success}
+	pub fn new_pending(succeeded:Option<u16>,warn:Option<u16>,fail:Option<u16>,to_do:Option<u16>,offset:u16) -> Self
+	{
+		StatusOk::Pending {succeeded,warn,fail,to_do,offset}
+	}
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusFailure{
 	pub code:FailureCode,
 	pub offending_element:Option<Vec<Tag>>,
 	pub comment:Option<String>,
+	pub offset:u16,
 }
 impl StatusFailure{
-	pub fn new(code:FailureCode, comment:Option<String>) -> StatusFailure {
-		StatusFailure{code, offending_element: None, comment}
+	pub fn new(code:FailureCode, comment:Option<String>, offset:u16) -> StatusFailure {
+		StatusFailure{code, offending_element: None, comment, offset}
 	}
 }
 
@@ -197,31 +207,39 @@ pub fn match_status(code:u16) -> Status
 {
 	match code {
 		0x0000 => Ok(StatusOk::Success),
-		0x0001 ..= 0x00FF =>
-			StatusWarning::try_from(code).unwrap_or_else(|_|{
+		0x0001 ..= 0x00FF => {
+			let code = StatusWarning::try_from(code).unwrap_or_else(|_|{
 				warn!("unknown warning code: {code:04X}");
 				StatusWarning::Warning
-			}).into(),
+			});
+			Ok(StatusOk::Warning{code, offending_element: None,	comment: None})
+		},
 		0xFF00 ..= 0xFFFF =>  
-			Ok(StatusOk::Pending{succeeded: None,warn: None,fail: None,to_do: None,}),
-		0xA700 ..= 0xA7ff =>
-			FailureCode::try_from(code).unwrap_or_else(|_|{
+			Ok(StatusOk::new_pending(None,None,None,None,code-0xFF00)),
+		0xA700 ..= 0xA7ff => {
+			let matched_code = FailureCode::try_from(code).unwrap_or_else(|_|{
 				warn!(r#"unknown error code: {code:04X} of category "{}""#, FailureCode::OutOfResources.to_string());
 				FailureCode::OutOfResources
-			}).into(),
-		0xA900 ..= 0xA9ff =>
-			FailureCode::try_from(code).unwrap_or_else(|_|{
+			});
+			Err(StatusFailure::new(matched_code, None, code-0xA700))
+		},
+		0xA900 ..= 0xA9ff => {
+			let matched_code = FailureCode::try_from(code).unwrap_or_else(|_|{
 				warn!(r#"unknown error code: {code:04X} of category "{}""#, FailureCode::SOPClassDoesNotMatch.to_string());
 				FailureCode::SOPClassDoesNotMatch
-			}).into(),
-		0xC000 ..= 0xCfff  =>
-			FailureCode::try_from(code).unwrap_or_else(|_|{
+			});
+			Err(StatusFailure::new(matched_code, None, code-0xA900))
+		},
+		0xC000 ..= 0xCfff  => {
+			let matched_code = FailureCode::try_from(code).unwrap_or_else(|_|{
 				warn!(r#"unknown error code: {code:04X} of category "{}""#, FailureCode::CannotUnderstand.to_string());
 				FailureCode::CannotUnderstand
-			}).into(),
+			});
+			Err(StatusFailure::new(matched_code, None, code-0xC000))
+		},
 		_ => {
 			error!("Unknown error code: {code:04X}");
-			Err(StatusFailure{code: FailureCode::CannotUnderstand,offending_element: None,comment: None})
+			Err(StatusFailure::new(FailureCode::CannotUnderstand, Some(format!("Unknown error code: {code:04X}")), 0))
 		}
 	}
 }
@@ -233,37 +251,21 @@ pub fn get_status(stat:impl Into<Status>) -> u16 {
 		Err(StatusFailure{code, ..}) => code.into(),
 	}
 }
-impl From<StatusOk> for Status{
-	fn from(value: StatusOk) -> Self {Ok(value)}
-}
-impl From<StatusWarning> for Status{
-	fn from(code: StatusWarning) -> Self
-	{
-		Ok(StatusOk::Warning{code, offending_element: None,	comment: None})
-	}
-}
-impl From<FailureCode> for Status{
-	fn from(code: FailureCode) -> Self 
-	{
-		Err(StatusFailure{code,	offending_element: None, comment: None})
-	}
-}
-
 impl From<DimseError> for StatusFailure
 {
 	fn from(err: DimseError) -> Self
 	{
-		StatusFailure::new(FailureCode::Failure, Some(err.to_string()))
+		StatusFailure::new(FailureCode::Failure, Some(err.to_string()),0)
 	}
 }
 
 impl Display for StatusFailure{
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result
 	{
-		let code = &self.code;
+		let offset = if self.offset > 0 {format!("+{}",self.offset)} else {"".to_string()};
 		if let Some(c) = &self.comment{
-			f.write_fmt(format_args!(r#"Error "{code}", comment: "{c}""#))
-		} else { f.write_fmt(format_args!(r#"Error: "{code}""#)) }
+			f.write_fmt(format_args!(r#"Error "{}{}", comment: "{c}""#,self.code,offset))
+		} else { f.write_fmt(format_args!(r#"Error: "{}{}""#,self.code,offset)) }
 
 	}
 }

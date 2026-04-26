@@ -148,7 +148,7 @@ impl TryInto<Payload> for Response
 				});
 				comment.map(|c|self.inner.obj.put(InMemElement::new(tags::ERROR_COMMENT,VR::AT, c)));
 			}
-			Ok(StatusOk::Pending { succeeded, warn, fail, to_do }) => {
+			Ok(StatusOk::Pending { succeeded, warn, fail, to_do, .. }) => {
 				let attr = [
 					(tags::NUMBER_OF_COMPLETED_SUBOPERATIONS, &succeeded),
 					(tags::NUMBER_OF_FAILED_SUBOPERATIONS,    &fail),
@@ -211,7 +211,7 @@ impl Message
 
 			match &mut status {
 				Ok(StatusOk::Success) => {}
-				Ok(StatusOk::Pending { succeeded, warn, fail, to_do }) => {
+				Ok(StatusOk::Pending { succeeded, warn, fail, to_do, .. }) => {
 					*to_do = Taker::take_opt(&mut obj, tags::NUMBER_OF_REMAINING_SUBOPERATIONS)?;
 					*succeeded = Taker::take_opt(&mut obj, tags::NUMBER_OF_COMPLETED_SUBOPERATIONS)?;
 					*fail = Taker::take_opt(&mut obj, tags::NUMBER_OF_FAILED_SUBOPERATIONS)?;

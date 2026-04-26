@@ -40,20 +40,20 @@ impl FileAccess for NullAccess {
 	type Item = String;
 
 	async fn get_path(&self, _: &Self::Item) -> Result<PathBuf, StatusFailure> {
-		Err(StatusFailure{code: NoSuchSOPInstance, offending_element: None, comment: None})
+		Err(StatusFailure::new(NoSuchSOPInstance, None, 0))
 	}
 
 	async fn store_file(&mut self, _: FileDicomObject<InMemDicomObject>) -> dimse::definitions::Status
 	{
-		Err(StatusFailure{code: Failure, offending_element: None, comment: None})
+		Err(StatusFailure::new(Failure, None,0))
 	}
 
 	async fn lookup(&self, _: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
-		Err(StatusFailure{code: Failure, offending_element: None, comment: None})
+		Err(StatusFailure::new(Failure, None, 0))
 	}
 
 	async fn find(&self, _: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
-		Err(StatusFailure::new(FailureCode::UnrecognizedOperation,Some("Not implemented".to_string())))
+		Err(StatusFailure::new(FailureCode::UnrecognizedOperation,Some("Not implemented".to_string()),0))
 	}
 }
 
@@ -103,18 +103,20 @@ impl FileAccess for MultiFileAccess {
 		let file = std::fs::File::create(path.clone())
 			.map_err(|e|StatusFailure::new(
 				FailureCode::ProcessingFailure,
-				Some(format!("creating {} failed ({e})", path.display()))
+				Some(format!("creating {} failed ({e})", path.display())),
+				0
 			)
 		)?;
 		obj.write_all(file)
 			.map_err(|e|StatusFailure::new(
 				FailureCode::ProcessingFailure,
-				Some(format!("writing {} failed ({e})", path.display()))
+				Some(format!("writing {} failed ({e})", path.display())),
+				0
 			))?;
 		self.instances.lock().unwrap().insert(instance.clone(),path.clone());
 		self.series.lock().unwrap().entry(series).or_default().push(instance.clone());
 		self.studies.lock().unwrap().entry(study).or_default().push(instance);
-		StatusOk::Success.into()
+		Ok(StatusOk::Success)
 	}
 
 	async fn lookup(&self, ident: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
@@ -122,21 +124,24 @@ impl FileAccess for MultiFileAccess {
 			.map_err(|_| StatusFailure{
 				code: NoSuchAttribute,
 				offending_element: Some(vec![tags::SOP_INSTANCE_UID]),
-				comment: None
+				comment: None,
+				offset: 0,
 			})?{
 			Ok(vec![instance])
 		} else if let Some(series) = Taker::get_opt(&ident,tags::SERIES_INSTANCE_UID)
 			.map_err(|_| StatusFailure{
 				code: NoSuchAttribute,
 				offending_element: Some(vec![tags::STUDY_INSTANCE_UID]),
-				comment: None
+				comment: None,
+				offset: 0,
 		})?{
 			Ok(self.series.lock().unwrap().get::<String>(&series).unwrap().clone())
 		} else if let Some(study) = Taker::get_opt(&ident,tags::STUDY_INSTANCE_UID)
 			.map_err(|_| StatusFailure{
 				code: NoSuchAttribute,
 				offending_element: Some(vec![tags::STUDY_INSTANCE_UID]),
-				comment: None
+				comment: None,
+				offset: 0,
 			})?{
 			Ok(self.series.lock().unwrap().get::<String>(&study).unwrap().clone())
 		} else { panic!("invalid ident") }
@@ -154,6 +159,6 @@ impl FileAccess for MultiFileAccess {
 				})
 				.map(|(uid,_,_)|uid.to_string());
 			Ok(found.collect())
-		} else { Err(StatusFailure::new(FailureCode::InvalidArgument, Some("Can only look up PatientName".into()))) }
+		} else { Err(StatusFailure::new(FailureCode::InvalidArgument, Some("Can only look up PatientName".into()),0)) }
 	}
 }

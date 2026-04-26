@@ -72,14 +72,14 @@ impl<B> Task<B> where B:FileAccess
 						.unwrap_or(self.assoc.context.select_ts(request.pc_id).map(|s|s.uid().to_string()))
 						.map_err(|e|{
 							error!("{e}");
-							StatusFailure::new(FailureCode::CannotUnderstand, Some(e.to_string()))
+							StatusFailure::new(FailureCode::CannotUnderstand, Some(e.to_string()),0)
 						})?;
 					match io::make_file(o, &ts)
 					{
 						Ok(f) => self.backend.store_file(f).await,
 						Err(e) => Err(e)
 					}
-				} else { FailureCode::InvalidArgument.into() }
+				} else { Err(StatusFailure::new(FailureCode::InvalidArgument,None,0)) }
 			}
 			// Query/Retrieve Service Class
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/chapter_C.html
@@ -88,7 +88,7 @@ impl<B> Task<B> where B:FileAccess
 					let instances = self.backend.lookup(&o).await?;
 					let mut failed:HashSet<_> = Default::default();
 					let mut fail_comment = Option::<String>::None;
-					if instances.is_empty() {return FailureCode::NoSuchSOPInstance.into();}
+					if instances.is_empty() {return Err(StatusFailure::new(FailureCode::NoSuchSOPInstance,None,0));}
 					
 					let (mut succeeded,mut warn,mut fail,mut to_do) = (0,0,0,instances.len() as u16);
 					for instance in instances {
@@ -110,23 +110,20 @@ impl<B> Task<B> where B:FileAccess
 							}
 						}
 						to_do -= 1;
-						let resp = request.make_response(StatusOk::Pending {
-							succeeded: Some(succeeded),
-							warn: Some(warn),
-							fail: Some(fail),
-							to_do: Some(to_do),
-						});
+						let resp = request.make_response(
+							Ok(StatusOk::new_pending(Some(succeeded), Some(warn), Some(fail), Some(to_do),	0))
+						);
 						self.assoc.send_payload(resp.try_into()?).await?;
 					}
-					if failed.is_empty(){StatusOk::Success.into()}
+					if failed.is_empty(){Ok(StatusOk::Success)}
 					else { // todo more details
-						StatusOk::Warning {
+						Ok(StatusOk::Warning {
 							code: StatusWarning::AttributeListWarning,
 							offending_element: if failed.is_empty(){None} else {Some(failed.into_iter().collect())},
 							comment: fail_comment,
-						}.into()
+						})
 					}
-				} else { FailureCode::InvalidArgument.into() }
+				} else { Err(StatusFailure::new(FailureCode::InvalidArgument, None,0)) }
 			}
 			RequestCode::C_FIND => {
 				if let Attachment::Obj(ident) = request.take_attachment(){
@@ -137,7 +134,7 @@ impl<B> Task<B> where B:FileAccess
 					{
 						let mut ob= dicom::object::open_file(
 							self.backend.get_path(&instance).await?
-						).map_err(|e|StatusFailure::new(FailureCode::ProcessingFailure, Some(e.to_string())))?;
+						).map_err(|e|StatusFailure::new(FailureCode::ProcessingFailure, Some(e.to_string()),0))?;
 						let mut ret = InMemDicomObject::new_empty();
 						let mut do_warn =false;
 						for e in ident.iter() // got though all key attributes in the identifier
@@ -157,28 +154,25 @@ impl<B> Task<B> where B:FileAccess
 						}
 						if do_warn {warn+=1}else { succeeded+=1 }
 						to_do -= 1;
-						let resp = request.make_response(StatusOk::Pending {
-							succeeded: Some(succeeded),
-							warn: Some(warn),
-							fail: None,
-							to_do: Some(to_do),
-						}).with_identifier(ret);
+						let resp = request.make_response(
+							Ok(StatusOk::new_pending(Some(succeeded), Some(warn), None, Some(to_do),0))
+						).with_identifier(ret);
 						self.assoc.send_payload(resp.try_into()?).await?;
 					}
 					if missed_el.is_empty()
 					{
-						StatusOk::Success.into()
+						Ok(StatusOk::Success)
 					} else { // todo more details
-						StatusOk::Warning {
+						Ok(StatusOk::Warning {
 							code: StatusWarning::AttributeListWarning,
 							offending_element: Some(missed_el.into_iter().collect()),
 							comment: None,
-						}.into()
+						})
 					}
-				} else { FailureCode::InvalidArgument.into() }
+				} else { Err(StatusFailure::new(FailureCode::InvalidArgument,None,0)) }
 			}
 			RequestCode::C_MOVE => {todo!()}
-			RequestCode::C_ECHO => StatusOk::Success.into(),
+			RequestCode::C_ECHO => Ok(StatusOk::Success),
 			_ => {todo!()}
 		}
 	}
@@ -195,11 +189,12 @@ impl<B> Task<B> where B:FileAccess
 					code: FailureCode::SOPClassDoesNotMatch,
 					offending_element: Some(vec![tags::MEDIA_STORAGE_SOP_CLASS_UID]),
 					comment: Some(format!("media storage SOP Class UID of the file was: {name} ({uid})")),
+					offset: 0,
 				})
 			},
 			Err(e) => {
 				debug!("Store for C-GET failed ({e})");
-				Err(StatusFailure::new(FailureCode::Failure, Some(e.to_string())))
+				Err(StatusFailure::new(FailureCode::Failure, Some(e.to_string()),0))
 			}
 		}
 	}

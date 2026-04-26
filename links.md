@@ -11,6 +11,7 @@ The Query/Retrieve Information Model is identified by the SOP Class negotiated a
 - [Matching](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.2.2.2.html)
 
 ## [Query Retrieve Service Class ](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/chapter_C.html)
+- [Keys](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.6.2.html#table_C.6-5)
 - [Additional Query/Retrieve Attributes](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.3.4.html)
 
 ### C-FIND
