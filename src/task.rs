@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use crate::association::{Association,ReceiveMessage, SendPayload};
 use crate::context::Context;
-use crate::definitions::{FailureCode, RequestCode, Status, StatusFailure, StatusOk, StatusWarning};
+use crate::definitions::{FailureCode, RequestCode, Status, StatusFailure, StatusOk, WarningCode};
 use crate::msg::{MessageType, Request, Response};
 use crate::payload::{Attachment, Payload};
 use crate::{io, Taker};
@@ -118,7 +118,7 @@ impl<B> Task<B> where B:FileAccess
 					if failed.is_empty(){Ok(StatusOk::Success)}
 					else { // todo more details
 						Ok(StatusOk::Warning {
-							code: StatusWarning::AttributeListWarning,
+							code: WarningCode::AttributeListWarning,
 							offending_element: if failed.is_empty(){None} else {Some(failed.into_iter().collect())},
 							comment: fail_comment,
 						})
@@ -164,7 +164,7 @@ impl<B> Task<B> where B:FileAccess
 						Ok(StatusOk::Success)
 					} else { // todo more details
 						Ok(StatusOk::Warning {
-							code: StatusWarning::AttributeListWarning,
+							code: WarningCode::AttributeListWarning,
 							offending_element: Some(missed_el.into_iter().collect()),
 							comment: None,
 						})

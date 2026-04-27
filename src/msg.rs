@@ -3,7 +3,7 @@ use std::io::Cursor;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use crate::association::{Association, ReceivePdu};
-use crate::definitions::{get_status, match_status, RequestCode, Status, StatusFailure, StatusOk, StatusWarning};
+use crate::definitions::{get_status, match_status, RequestCode, Status, StatusFailure, StatusOk, WarningCode};
 use crate::error::DimseError;
 use crate::payload::{Attachment, Payload};
 use crate::{io, lazy_dump_to_string, Taker};
@@ -296,7 +296,7 @@ impl Message
 						format!("Failed reading {} for attachment ({e})",filename.display()))?;
 				self.attachment = Attachment::Obj(o.into_inner());
 				Ok(StatusOk::Warning {
-					code: StatusWarning::DataCoercion,
+					code: WarningCode::DataCoercion,
 					offending_element: Some(vec![MEDIA_STORAGE_SOP_CLASS_UID]),
 					comment: Some(format!(
 						"Instance has storage class {} but was coerced into {} with transfer syntax {}",

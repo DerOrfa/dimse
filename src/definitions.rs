@@ -96,7 +96,7 @@ pub enum StatusOk
 		offset:u16,
 	},
 	Warning{
-		code:StatusWarning,
+		code: WarningCode,
 		offending_element:Option<Vec<Tag>>,
 		comment:Option<String>,
 	},
@@ -125,7 +125,7 @@ impl StatusFailure{
 
 #[derive(Debug, Clone, Eq, PartialEq, TryFromPrimitive,IntoPrimitive,Error)]
 #[repr(u16)]
-pub enum StatusWarning {
+pub enum WarningCode {
 	#[error("Attribute List warning")]
 	AttributeListWarning = 0x0107,
 	#[error("Attribute Value out of range")]
@@ -208,9 +208,9 @@ pub fn match_status(code:u16) -> Status
 	match code {
 		0x0000 => Ok(StatusOk::Success),
 		0x0001 ..= 0x00FF => {
-			let code = StatusWarning::try_from(code).unwrap_or_else(|_|{
+			let code = WarningCode::try_from(code).unwrap_or_else(|_|{
 				warn!("unknown warning code: {code:04X}");
-				StatusWarning::Warning
+				WarningCode::Warning
 			});
 			Ok(StatusOk::Warning{code, offending_element: None,	comment: None})
 		},
