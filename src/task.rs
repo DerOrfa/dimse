@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use crate::association::{Association,ReceiveMessage, SendPayload};
 use crate::context::Context;
-use crate::definitions::{FailureCode, RequestCode, Status, StatusFailure, StatusOk, WarningCode};
+use crate::definitions::{FailureCode, RequestCode, WarningCode};
 use crate::msg::{MessageType, Request, Response};
 use crate::payload::{Attachment, Payload};
 use crate::{io, Taker};
@@ -18,6 +18,7 @@ use tokio::task::JoinSet;
 use tracing::{debug, error};
 use crate::error::DimseError::UnsupportedPC;
 use crate::io::FileAccess;
+use crate::status::*;
 
 pub struct Task<B> where B:FileAccess
 {
@@ -72,14 +73,14 @@ impl<B> Task<B> where B:FileAccess
 						.unwrap_or(self.assoc.context.select_ts(request.pc_id).map(|s|s.uid().to_string()))
 						.map_err(|e|{
 							error!("{e}");
-							StatusFailure::new(FailureCode::CannotUnderstand, Some(e.to_string()),0)
+							failure(FailureCode::CannotUnderstand).comment(e)
 						})?;
 					match io::make_file(o, &ts)
 					{
 						Ok(f) => self.backend.store_file(f).await,
 						Err(e) => Err(e)
 					}
-				} else { Err(StatusFailure::new(FailureCode::InvalidArgument,None,0)) }
+				} else { Err(failure(FailureCode::InvalidArgument)) }
 			}
 			// Query/Retrieve Service Class
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/chapter_C.html
@@ -88,17 +89,19 @@ impl<B> Task<B> where B:FileAccess
 					let instances = self.backend.lookup(&o).await?;
 					let mut failed:HashSet<_> = Default::default();
 					let mut fail_comment = Option::<String>::None;
-					if instances.is_empty() {return Err(StatusFailure::new(FailureCode::NoSuchSOPInstance,None,0));}
+					if instances.is_empty() {return Err(failure(FailureCode::NoSuchSOPInstance));}
 					
 					let (mut succeeded,mut warn,mut fail,mut to_do) = (0,0,0,instances.len() as u16);
 					for instance in instances {
 						match self.c_store(&instance).await{
 							Ok(s) => {
 								match s {
-									StatusOk::Success => {succeeded += 1;},
-									StatusOk::Warning { offending_element, comment, .. } => {
+									StatusOk::Success(_) => {succeeded += 1;},
+									StatusOk::Warning (StatusWarning{ offending_element, comment, .. }) => {
 										warn += 1;
-										for e in offending_element.iter().flatten(){failed.insert(*e);	}
+										for e in offending_element{
+											failed.insert(e);	
+										}
 										fail_comment = fail_comment.xor(comment.clone());
 									}
 									_ => {panic!("Unexpected store result");}
@@ -110,20 +113,18 @@ impl<B> Task<B> where B:FileAccess
 							}
 						}
 						to_do -= 1;
-						let resp = request.make_response(
-							Ok(StatusOk::new_pending(Some(succeeded), Some(warn), Some(fail), Some(to_do),	0))
-						);
+						let resp = request.make_response(pending(succeeded, warn, fail, to_do));
 						self.assoc.send_payload(resp.try_into()?).await?;
 					}
-					if failed.is_empty(){Ok(StatusOk::Success)}
+					if failed.is_empty(){Ok(success().into())}
 					else { // todo more details
-						Ok(StatusOk::Warning {
-							code: WarningCode::AttributeListWarning,
-							offending_element: if failed.is_empty(){None} else {Some(failed.into_iter().collect())},
-							comment: fail_comment,
-						})
+						match fail_comment {
+							None => warning(WarningCode::AttributeListWarning),
+							Some(c) => warning(WarningCode::AttributeListWarning).comment(c)
+						}
+						.offending(failed).into()
 					}
-				} else { Err(StatusFailure::new(FailureCode::InvalidArgument, None,0)) }
+				} else { Err(failure(FailureCode::InvalidArgument)) }
 			}
 			RequestCode::C_FIND => {
 				if let Attachment::Obj(ident) = request.take_attachment(){
@@ -134,7 +135,7 @@ impl<B> Task<B> where B:FileAccess
 					{
 						let mut ob= dicom::object::open_file(
 							self.backend.get_path(&instance).await?
-						).map_err(|e|StatusFailure::new(FailureCode::ProcessingFailure, Some(e.to_string()),0))?;
+						).map_err(|e|failure(FailureCode::ProcessingFailure).comment(e))?;
 						let mut ret = InMemDicomObject::new_empty();
 						let mut do_warn =false;
 						for e in ident.iter() // got though all key attributes in the identifier
@@ -154,25 +155,21 @@ impl<B> Task<B> where B:FileAccess
 						}
 						if do_warn {warn+=1}else { succeeded+=1 }
 						to_do -= 1;
-						let resp = request.make_response(
-							Ok(StatusOk::new_pending(Some(succeeded), Some(warn), None, Some(to_do),0))
-						).with_identifier(ret);
+						let resp = request
+							.make_response(pending(succeeded, warn, 0, to_do))
+							.with_identifier(ret);
 						self.assoc.send_payload(resp.try_into()?).await?;
 					}
 					if missed_el.is_empty()
 					{
-						Ok(StatusOk::Success)
+						Ok(success().into())
 					} else { // todo more details
-						Ok(StatusOk::Warning {
-							code: WarningCode::AttributeListWarning,
-							offending_element: Some(missed_el.into_iter().collect()),
-							comment: None,
-						})
+						warning(WarningCode::AttributeListWarning).offending(missed_el).into()
 					}
-				} else { Err(StatusFailure::new(FailureCode::InvalidArgument,None,0)) }
+				} else { Err(failure(FailureCode::InvalidArgument)) }
 			}
 			RequestCode::C_MOVE => {todo!()}
-			RequestCode::C_ECHO => Ok(StatusOk::Success),
+			RequestCode::C_ECHO => Ok(success().into()),
 			_ => {todo!()}
 		}
 	}
@@ -185,16 +182,14 @@ impl<B> Task<B> where B:FileAccess
 			Ok(s) => Ok(s),
 			Err(UnsupportedPC { uid, name }) => {
 				debug!("Store failed because of unsupported storage class {name}");
-				Err(StatusFailure {
-					code: FailureCode::SOPClassDoesNotMatch,
-					offending_element: Some(vec![tags::MEDIA_STORAGE_SOP_CLASS_UID]),
-					comment: Some(format!("media storage SOP Class UID of the file was: {name} ({uid})")),
-					offset: 0,
-				})
+				Err(failure(FailureCode::SOPClassDoesNotMatch)
+					.offending([tags::MEDIA_STORAGE_SOP_CLASS_UID])
+					.comment(format!("media storage SOP Class UID of the file was: {name} ({uid})"))
+				)
 			},
 			Err(e) => {
 				debug!("Store for C-GET failed ({e})");
-				Err(StatusFailure::new(FailureCode::Failure, Some(e.to_string()),0))
+				Err(failure(FailureCode::Failure).comment(e))
 			}
 		}
 	}

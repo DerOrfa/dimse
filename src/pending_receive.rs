@@ -8,11 +8,12 @@ use futures::{FutureExt, Stream};
 use futures::stream::FusedStream;
 use snafu::ResultExt;
 use tracing::{debug, error, trace, warn};
-use crate::definitions::{RequestCode, StatusOk};
 use crate::error::DimseError::UnexpectedMessage;
 use crate::msg::{MessageType, Response};
 use crate::payload::{Attachment, Payload};
 use crate::{io, Taker};
+use crate::definitions::RequestCode;
+use crate::status::{success, StatusOk, StatusPending};
 
 #[derive(Default)]
 enum PendingState<'a,A>
@@ -93,22 +94,19 @@ impl<'a,A> PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin
 	{
 		let peer = &self.get_association().peer;
 		let a = match response.status.clone() {
-			Ok(StatusOk::Success) => {
-				trace!("Got end signal, closing stream..");
+			Ok(StatusOk::Success(_)) => {
+				trace!("Got end signal, closing connection to {peer}..");
 				self.terminated=true;return Ok(None)
 			},
-			Ok(StatusOk::Pending{ succeeded, warn, fail, to_do, .. }) => {
+			Ok(StatusOk::Pending(StatusPending{ succeeded, warn, fail, to_do, .. })) => {
 				self.succeeded = succeeded;
 				self.warn = warn;
 				self.failed = fail;
 				self.to_do = to_do;
 				response.take_attachment()
 			},
-			Ok(StatusOk::Warning{ code, offending_element:_, comment }) => {
-				match comment {
-					None => warn!("received warning from {peer}: {code}"),
-					Some(c) => warn!("received warning from {peer}: {code} ({c})"),
-				}
+			Ok(StatusOk::Warning(w)) => {
+				warn!("Got status {w}");
 				response.take_attachment()
 			}
 			Err(e) => {
@@ -201,7 +199,7 @@ impl<'a, A> Stream for PendingStore<'a, A> where Association<A>:ReceiveMessage +
 						// store the file object and let peer know about the result
 						let response = io::make_file(o, ts).map(|o|{
 							this.store.replace(o);
-							StatusOk::Success
+							success().into()
 						});
 						let response = req.make_response(response);
 						return this.poll_send(Some(response.try_into()?),cx)?

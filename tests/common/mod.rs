@@ -4,8 +4,6 @@ pub mod dcm;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom_dictionary_std::tags;
 use dimse;
-use dimse::definitions::FailureCode::{Failure, NoSuchAttribute, NoSuchSOPInstance};
-use dimse::definitions::{FailureCode, StatusFailure, StatusOk};
 use dimse::error::DimseError;
 use dimse::io::FileAccess;
 use dimse::Taker;
@@ -20,9 +18,11 @@ use tokio::spawn;
 use tokio::sync::watch::Receiver;
 use tokio::task::JoinHandle;
 use tracing::error;
+use dimse::definitions::FailureCode;
+use dimse::status::{failure, success, Comment, Offending, StatusFailure};
 
 pub async fn init_server<F: FileAccess + 'static>(accessor:F)
-	-> Result<(SocketAddr,Receiver<()>,JoinHandle<Result<(),DimseError>>), DimseError>
+                                                  -> Result<(SocketAddr,Receiver<()>,JoinHandle<Result<(),DimseError>>), DimseError>
 {
 	let dicom_listener = TcpListener::bind("localhost:0").await
 		.with_whatever_context::<_,_,DimseError>(|e|format!("Binding to localhost failed: {e}"))?;
@@ -40,20 +40,20 @@ impl FileAccess for NullAccess {
 	type Item = String;
 
 	async fn get_path(&self, _: &Self::Item) -> Result<PathBuf, StatusFailure> {
-		Err(StatusFailure::new(NoSuchSOPInstance, None, 0))
+		Err(failure(FailureCode::NoSuchSOPInstance))
 	}
 
-	async fn store_file(&mut self, _: FileDicomObject<InMemDicomObject>) -> dimse::definitions::Status
+	async fn store_file(&mut self, _: FileDicomObject<InMemDicomObject>) -> dimse::status::Status
 	{
-		Err(StatusFailure::new(Failure, None,0))
+		Err(failure(FailureCode::Failure))
 	}
 
 	async fn lookup(&self, _: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
-		Err(StatusFailure::new(Failure, None, 0))
+		Err(failure(FailureCode::Failure))
 	}
 
 	async fn find(&self, _: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
-		Err(StatusFailure::new(FailureCode::UnrecognizedOperation,Some("Not implemented".to_string()),0))
+		Err(failure(FailureCode::UnrecognizedOperation).comment("Not implemented"))
 	}
 }
 
@@ -94,55 +94,39 @@ impl FileAccess for MultiFileAccess {
 		Ok(std::env::temp_dir().join(format!("Mr.{uid}.dcm")))
 	}
 
-	async fn store_file(&mut self, obj: FileDicomObject<InMemDicomObject>) -> dimse::definitions::Status
+	async fn store_file(&mut self, obj: FileDicomObject<InMemDicomObject>) -> dimse::status::Status
 	{
 		let instance = Taker::get(&obj,tags::SOP_INSTANCE_UID)?;
 		let series = Taker::get(&obj,tags::SERIES_INSTANCE_UID)?;
 		let study = Taker::get(&obj,tags::STUDY_INSTANCE_UID)?;
 		let path= self.get_path(&instance).await?;
 		let file = std::fs::File::create(path.clone())
-			.map_err(|e|StatusFailure::new(
-				FailureCode::ProcessingFailure,
-				Some(format!("creating {} failed ({e})", path.display())),
-				0
-			)
-		)?;
+			.map_err(|e|
+				failure(FailureCode::ProcessingFailure).comment(format!("creating {} failed ({e})", path.display()))	
+			)?;
 		obj.write_all(file)
-			.map_err(|e|StatusFailure::new(
-				FailureCode::ProcessingFailure,
-				Some(format!("writing {} failed ({e})", path.display())),
-				0
-			))?;
+			.map_err(|e|
+				failure(FailureCode::ProcessingFailure)
+					.comment(format!("writing {} failed ({e})", path.display()))
+			)?;
 		self.instances.lock().unwrap().insert(instance.clone(),path.clone());
 		self.series.lock().unwrap().entry(series).or_default().push(instance.clone());
 		self.studies.lock().unwrap().entry(study).or_default().push(instance);
-		Ok(StatusOk::Success)
+		Ok(success().into())
 	}
 
 	async fn lookup(&self, ident: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
 		if let Some(instance) = Taker::get_opt(&ident,tags::SOP_INSTANCE_UID)
-			.map_err(|_| StatusFailure{
-				code: NoSuchAttribute,
-				offending_element: Some(vec![tags::SOP_INSTANCE_UID]),
-				comment: None,
-				offset: 0,
-			})?{
+			.map_err(|_| failure(FailureCode::NoSuchAttribute).offending([tags::SOP_INSTANCE_UID]))?
+		{
 			Ok(vec![instance])
 		} else if let Some(series) = Taker::get_opt(&ident,tags::SERIES_INSTANCE_UID)
-			.map_err(|_| StatusFailure{
-				code: NoSuchAttribute,
-				offending_element: Some(vec![tags::STUDY_INSTANCE_UID]),
-				comment: None,
-				offset: 0,
-		})?{
+			.map_err(|_| failure(FailureCode::NoSuchAttribute).offending([tags::STUDY_INSTANCE_UID]))?
+		{
 			Ok(self.series.lock().unwrap().get::<String>(&series).unwrap().clone())
 		} else if let Some(study) = Taker::get_opt(&ident,tags::STUDY_INSTANCE_UID)
-			.map_err(|_| StatusFailure{
-				code: NoSuchAttribute,
-				offending_element: Some(vec![tags::STUDY_INSTANCE_UID]),
-				comment: None,
-				offset: 0,
-			})?{
+			.map_err(|_| failure(FailureCode::NoSuchAttribute).offending([tags::STUDY_INSTANCE_UID]))?
+		{
 			Ok(self.series.lock().unwrap().get::<String>(&study).unwrap().clone())
 		} else { panic!("invalid ident") }
 
@@ -159,6 +143,6 @@ impl FileAccess for MultiFileAccess {
 				})
 				.map(|(uid,_,_)|uid.to_string());
 			Ok(found.collect())
-		} else { Err(StatusFailure::new(FailureCode::InvalidArgument, Some("Can only look up PatientName".into()),0)) }
+		} else { Err(failure(FailureCode::InvalidArgument).comment("Can only look up PatientName")) }
 	}
 }

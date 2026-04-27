@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use dicom_dictionary_std::tags;
 use tokio::sync::mpsc::Receiver;
 use tracing::error;
-use crate::definitions::{FailureCode, Status, StatusFailure};
+use crate::definitions::FailureCode;
+use crate::status::{failure, Comment, Status, StatusFailure};
 use crate::Taker;
 
 pub struct PipeDataReader<'a>{
@@ -84,8 +85,7 @@ pub fn make_file(obj: InMemDicomObject, ts:&str) -> std::result::Result<FileDico
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_b.2.3.html
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part07/chapter_9.html
 			error!("Error {e} when preparing received data for storage");
-			Err(StatusFailure::new(FailureCode::ProcessingFailure,
-				Some(format!("Failed storing {uid}:({e})")),0)
+			Err(failure(FailureCode::ProcessingFailure).comment(format!("Failed storing {uid}:({e})"))
 			)
 		}
 	}

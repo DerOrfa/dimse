@@ -3,7 +3,6 @@ use std::io::Cursor;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use crate::association::{Association, ReceivePdu};
-use crate::definitions::{get_status, match_status, RequestCode, Status, StatusFailure, StatusOk, WarningCode};
 use crate::error::DimseError;
 use crate::payload::{Attachment, Payload};
 use crate::{io, lazy_dump_to_string, Taker};
@@ -14,13 +13,14 @@ use dicom::object::{open_file, InMemDicomObject};
 use dicom::object::mem::InMemElement;
 use dicom::transfer_syntax::entries::IMPLICIT_VR_LITTLE_ENDIAN;
 use dicom_dictionary_std::tags;
-use dicom_dictionary_std::tags::MEDIA_STORAGE_SOP_CLASS_UID;
 use dicom_dictionary_std::uids::{ENHANCED_MR_IMAGE_STORAGE, MR_IMAGE_STORAGE};
 use dicom_ul::pdu::{PDataValue, PDataValueType, PresentationContextNegotiated};
 use snafu::ResultExt;
 use tracing::{debug, warn};
 use crate::context::Context;
-use crate::error::DimseError::{IncompleteMsg, UnexpectedEmptyMsg};
+use crate::definitions::RequestCode;
+use crate::error::DimseError::{IncompleteMsg, InvalidStatus, UnexpectedEmptyMsg};
+use crate::status::{warning, Comment, Code, Status, WarningCode, StatusFailure, StatusOk, StatusWarning, StatusPending, success};
 
 /// Unified message class
 /// https://dicom.nema.org/medical/dicom/current/output/chtml/part07/chapter_9.html#table_9.1-1
@@ -91,7 +91,7 @@ impl Display for Response
 {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		let s= match &self.status {
-			Ok(o) => o.as_ref().to_string(),
+			Ok(o) => o.to_string(),
 			Err(e) => e.to_string(),
 		};
 		f.write_fmt(format_args!(r#"response to {} with status "{}""#,self.inner,s))
@@ -130,25 +130,25 @@ impl TryInto<Payload> for Response
 	fn try_into(mut self) -> Result<Payload, Self::Error>
 	{
 		let code:u16 = self.inner.command.clone().into();
-		let status_code = get_status(self.status.clone());
+		let status_code = self.status.code();
 		self.inner.obj.put(DataElement::new(tags::COMMAND_FIELD, VR::US, dicom_value!(U16, code | 0x8000)));
 		self.inner.obj.put(DataElement::new(tags::MESSAGE_ID_BEING_RESPONDED_TO, VR::US, dicom_value!(self.inner.id)));
 		self.inner.obj.put(DataElement::new(tags::STATUS, VR::US, dicom_value!(U16, status_code)));
 		// https://dicom.nema.org/dicom/2013/output/chtml/part07/chapter_C.html
 		match self.status
 		{
-			Ok(StatusOk::Success) => {}
-			Ok(StatusOk::Warning{ offending_element, comment, .. })
+			Ok(StatusOk::Success(_)) => {}
+			Ok(StatusOk::Warning(StatusWarning{ offending_element, comment, .. }))
 			| Err(StatusFailure{offending_element, comment, ..})
 			=> {
-				offending_element.map(|e|
+				if !offending_element.is_empty()
 				{
-					let e = SmallVec::<[_;2]>::from_vec(e);
+					let e = SmallVec::<[_;2]>::from_iter(offending_element);
 					self.inner.obj.put(InMemElement::new(tags::OFFENDING_ELEMENT,VR::AT,PrimitiveValue::Tags(e)));
-				});
+				};
 				comment.map(|c|self.inner.obj.put(InMemElement::new(tags::ERROR_COMMENT,VR::AT, c)));
 			}
-			Ok(StatusOk::Pending { succeeded, warn, fail, to_do, .. }) => {
+			Ok(StatusOk::Pending (StatusPending{ succeeded, warn, fail, to_do, .. })) => {
 				let attr = [
 					(tags::NUMBER_OF_COMPLETED_SUBOPERATIONS, &succeeded),
 					(tags::NUMBER_OF_FAILED_SUBOPERATIONS,    &fail),
@@ -193,7 +193,7 @@ impl Message
 		let is_request = (command_code & 0x8000) == 0;
 		let command = (command_code & !0x8000).try_into()
 			.with_whatever_context::<_,_,DimseError>(|e|
-				format!("Invalid command field code {:04X}H ({e})", command_code)
+				format!("Invalid command field code 0x{:04X} ({e})", command_code)
 			)?;
 
 		let ret:MessageType = if is_request
@@ -207,20 +207,22 @@ impl Message
 				},
 			})
 		} else { // it's a response
-			let mut status = match_status(Taker::take(&mut obj, tags::STATUS)?);
+			let mut status = Taker::take(&mut obj, tags::STATUS)
+				.and_then(|c|Status::try_from_code(c).ok_or(InvalidStatus{code:command_code}))?;
 
 			match &mut status {
-				Ok(StatusOk::Success) => {}
-				Ok(StatusOk::Pending { succeeded, warn, fail, to_do, .. }) => {
+				Ok(StatusOk::Success(_)) => {}
+				Ok(StatusOk::Pending (StatusPending{ succeeded, warn, fail, to_do, .. })) => {
 					*to_do = Taker::take_opt(&mut obj, tags::NUMBER_OF_REMAINING_SUBOPERATIONS)?;
 					*succeeded = Taker::take_opt(&mut obj, tags::NUMBER_OF_COMPLETED_SUBOPERATIONS)?;
 					*fail = Taker::take_opt(&mut obj, tags::NUMBER_OF_FAILED_SUBOPERATIONS)?;
 					*warn = Taker::take_opt(&mut obj, tags::NUMBER_OF_WARNING_SUBOPERATIONS)?;
 				}
-				Ok(StatusOk::Warning { offending_element, comment,.. })
+				Ok(StatusOk::Warning (StatusWarning{ offending_element, comment,.. }))
 				| Err(StatusFailure{ offending_element, comment, .. }) =>
 					{
-						*offending_element = Taker::take_opt(&mut obj, tags::OFFENDING_ELEMENT)?;
+						let off:Vec<_> = Taker::take_opt(&mut obj, tags::OFFENDING_ELEMENT)?.unwrap_or_default();
+						*offending_element = off.into_iter().collect();
 						*comment = Taker::take_opt(&mut obj, tags::ERROR_COMMENT)?;
 					}
 			}
@@ -268,7 +270,7 @@ impl Message
 	///
 	/// Failing that, it will try to fall back to ENHANCED_MR_IMAGE_STORAGE and failing that, to MR_IMAGE_STORAGE.
 	/// Hence, it might change the abstract syntax of the request.
-	pub fn attach_file(&mut self, filename:impl AsRef<Path>, context: &Context) -> Status
+	pub fn attach_file(&mut self, filename:impl AsRef<Path>, context: &Context) -> Result<StatusOk, StatusFailure>
 	{
 		let filename = filename.as_ref();
 		// read metadata header
@@ -283,7 +285,7 @@ impl Message
 				debug!("directly attaching file {} to the message {} using presentation context index {}",filename.display(), self.id, pc.id);
 				self.pc_id = pc.id;
 				self.attachment = Attachment::File { path: filename.to_path_buf(), offset, pc_id:pc.id};
-				Ok(StatusOk::Success)
+				Ok(success().into())
 			}
 			None => { // Nope, try fallbacks
 				debug!("Attaching file {} as object to the message {}",filename.display(), self.id);
@@ -295,15 +297,13 @@ impl Message
 					.with_whatever_context::<_,_,DimseError>(|e|
 						format!("Failed reading {} for attachment ({e})",filename.display()))?;
 				self.attachment = Attachment::Obj(o.into_inner());
-				Ok(StatusOk::Warning {
-					code: WarningCode::DataCoercion,
-					offending_element: Some(vec![MEDIA_STORAGE_SOP_CLASS_UID]),
-					comment: Some(format!(
+				Ok(warning(WarningCode::DataCoercion)
+					.comment(format!(
 						"Instance has storage class {} but was coerced into {} with transfer syntax {}",
 						meta.media_storage_sop_instance_uid(),
 						pc.abstract_syntax, pc.transfer_syntax
 					))
-				})
+					.into())
 			}
 		}
 	}
@@ -323,7 +323,7 @@ impl Message
 			None => "message",
 		};
 		self.obj.put(DataElement::new(tags::COMMAND_DATA_SET_TYPE,VR::US,dicom_value!(U16,att_code)));
-		debug!("Preparing {title} {self} to be sent");
+		debug!("Preparing {title} {self}");
 		let obj = InMemDicomObject::command_from_element_iter(self.obj.into_iter());
 		lazy_dump_to_string(&obj).and_then(|s|Some(debug!("{s}")));
 		obj.write_dataset_with_ts(&mut data, &IMPLICIT_VR_LITTLE_ENDIAN.erased())

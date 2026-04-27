@@ -3,9 +3,9 @@
 
 use std::io::Seek;
 use std::{format, vec};
-use crate::definitions::{RequestCode, StatusOk};
-use crate::error::DimseError::{self,UnexpectedEmptyMsg, UnexpectedMessageType, UnexpectedNonDataPdu};
-use crate::error::Result;
+use crate::definitions::RequestCode;
+use crate::error::DimseError::{UnexpectedEmptyMsg, UnexpectedMessageType, UnexpectedNonDataPdu};
+use crate::error::{DimseError, Result};
 use crate::msg::{MessageType, Request};
 use crate::payload::{Attachment, Payload};
 use crate::pending_receive::PendingReceive;
@@ -30,6 +30,7 @@ use crate::client::RetrieveLevel;
 use crate::definitions::RequestCode::{C_FIND, C_GET, C_MOVE, C_STORE};
 use crate::{io, lazy_dump_to_string, msg, Taker};
 use crate::context::Context;
+use crate::status::{StatusOk, StatusPending, StatusSuccess};
 
 pub enum Sink<'a>
 {
@@ -214,10 +215,10 @@ impl<A> Association<A>
 			// wait for confirmation
 			match self.receive_response(C_STORE).await?.status
 			{
-				Ok(StatusOk::Success) => return Ok(ret),
-				Ok(StatusOk::Warning{ code, offending_element, comment, }) => {
-					warn!("Unexpected Warning reply from c-store {code:?} ");
-					return Ok(StatusOk::Warning{ code, offending_element, comment, })
+				Ok(StatusOk::Success(_)) => return Ok(ret),
+				Ok(StatusOk::Warning(w)) => {
+					warn!("Unexpected Warning reply from c-store {w} ");
+					return Ok(w.into())
 				},
 				Ok(StatusOk::Pending{..}) => {},
 				Err(e) =>
@@ -250,7 +251,7 @@ impl<A> Association<A>
 							let ts: Option<String> = Taker::get_opt(&o, tags::TRANSFER_SYNTAX_UID)?;
 							let ts = ts.as_deref().unwrap_or(self.context.select_ts(req.pc_id)?.uid());
 							let response = io::make_file(o, ts).map(|o|{
-								ret = Some(o);StatusOk::Success
+								ret = Some(o);StatusSuccess.into()
 							});
 							let response = req.make_response(response);
 							self.send_payload(response.try_into()?).await?
@@ -259,22 +260,19 @@ impl<A> Association<A>
 				}
 				MessageType::Response(resp) => { // either pending or finish (or fail :-( )
 					match resp.status {
-						Ok(StatusOk::Success) | Ok(StatusOk::Warning {..}) => {
+						Ok(StatusOk::Success(_)) | Ok(StatusOk::Warning {..}) => {
 							return Ok(ret.unwrap());
 						}
-						Ok(StatusOk::Pending { succeeded, warn, fail, .. }) => {
+						Ok(StatusOk::Pending (StatusPending{ succeeded, warn, fail, .. })) => {
 							debug!("Success:{} Warning:{} Fail:{}",
 								succeeded.unwrap_or_default(), warn.unwrap_or_default(), fail.unwrap_or_default()
 							);
 						}
-						Err(e) => {
-							return Err(e.into())
-						}
+						Err(e) => return Err(e.into())
 					}
 				}
 			}
 		}
-
 	}
 }
 

@@ -10,6 +10,8 @@ mod context;
 pub(crate) mod dispatcher;
 mod server;
 pub mod pending_receive;
+pub mod status;
+
 use std::io::{Cursor, Read};
 use dicom::core::{DataDictionary, PrimitiveValue, Tag};
 use dicom::core::header::Header;

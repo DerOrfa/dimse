@@ -1,9 +1,9 @@
-use crate::definitions::StatusFailure;
 use crate::msg::{MessageType, Response};
 use crate::payload::Payload;
 use dicom_ul::Pdu;
 use snafu::prelude::*;
 use tokio::sync::mpsc::error::SendError;
+use crate::status::StatusFailure;
 
 #[derive(Debug, Snafu)]
 pub enum DimseError {
@@ -43,6 +43,8 @@ pub enum DimseError {
 	DcmWriteError{source:dicom::object::WriteError},
 	#[snafu(transparent)]
 	AssReadError{source: dicom_ul::association::Error},
+	#[snafu(display("Invalid status code 0x{code:04X}"))]
+	InvalidStatus{code:u16},
 	#[snafu(transparent)]
 	StatusFailure{source:StatusFailure},
 	#[snafu(transparent)]
@@ -53,16 +55,6 @@ pub enum DimseError {
 	IoError{source: std::io::Error},
 	#[snafu(transparent)]
 	JoinError{source: tokio::task::JoinError},
-
-
-
-	// ServerError(#[from] dicom_ul::association::server::Error),
-	// #[error("Pipeline Object send error {0}")]
-	// ObjSendError(#[from] SendError<InMemDicomObject>),
-	// #[error(transparent)]
-	// ConvertValueError(#[from] dicom::core::value::ConvertValueError),
-	// #[error(transparent)]
-	// DimseError(#[from] super::definitions::StatusFailure),
 }
 
 pub type Result<T> = std::result::Result<T, DimseError>;
