@@ -89,36 +89,3 @@ impl SendPdu for Server {
 		Ok(crate::association::Sink::Async(sink))
 	}
 }
-
-impl SendPayload for Server {
-	async fn send_request(&mut self, request: Request) -> Result<()>
-	{
-		self.send_payload(request.try_into()?).await
-	}
-	async fn send_payload(&mut self, payload: Payload) -> Result<()>
-	{
-		let pc_id= payload.command.presentation_context_id;
-		self.0.send(&Pdu::PData {data:vec![payload.command]}).await?;
-		match payload.attachment {
-			Attachment::File{ path, offset, pc_id } =>
-				self.send_file(path.clone(), offset, pc_id).await
-					.with_whatever_context(|e|
-						format!("Failed sending file {}: {e}",path.display())),
-			Attachment::Obj(o) => {
-				lazy_dump_to_string(&o).map(|s|debug!("sending object:\n{s}"));
-				let pc = self.0.presentation_contexts()
-					.iter().find(|c|c.id == pc_id)
-					.expect("Invalid presentation context");
-				let reg = TransferSyntaxRegistry::default();
-				let ts = reg.get(pc.transfer_syntax.as_str())
-					.ok_or(TransferSyntaxNotFound{ts:pc.transfer_syntax.clone()})?;
-
-				let sink = SyncIoBridge::new(self.0.send_pdata(pc_id));
-				o.write_dataset_with_ts(sink,ts)
-					.with_whatever_context(|e|format!("Failed sending object: {e}"))
-			},
-			Attachment::None => Ok(())
-		}
-	}
-
-}
