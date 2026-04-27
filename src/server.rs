@@ -1,35 +1,30 @@
 use std::borrow::Cow;
-use std::io::{Cursor, Read, SeekFrom};
-use std::path::PathBuf;
+use std::io::{Cursor, Read};
 use dicom::encoding::{TransferSyntax, TransferSyntaxIndex};
 use dicom::object::InMemDicomObject;
 use dicom::transfer_syntax::TransferSyntaxRegistry;
 use dicom_ul::{FullAeAddr, Pdu, ServerAssociationOptions};
 use dicom_ul::association::AsyncServerAssociation;
 use snafu::ResultExt;
-use tokio::io::AsyncSeekExt;
 use tokio::net::TcpStream;
+use tokio::task::spawn_blocking;
 use tokio_util::io::SyncIoBridge;
 use tracing::debug;
-use crate::association::{Association, ReceivePdu, SendPayload, SendPdu};
-use crate::error::DimseError::{TransferSyntaxNotFound};
+use crate::association::{Association, ReceivePdu, SendPdu};
 use crate::error::{DimseError, Result};
-use crate::lazy_dump_to_string;
-use crate::msg::Request;
-use crate::payload::{Attachment, Payload};
 
-pub struct Server(AsyncServerAssociation<TcpStream>);
+pub struct Server(Option<AsyncServerAssociation<TcpStream>>);
 impl Server {
 	pub async fn new<'a>(ae_title:impl Into<Cow<'a,str>>, stream: TcpStream) -> Result<Association<Self>>
 	{
 		let ae_title = ae_title.into();
 		let local = FullAeAddr::new(ae_title.clone(),stream.local_addr()?);
 		let peer = FullAeAddr::new(ae_title.clone(),stream.peer_addr()?);
-
-		let inner = Server(Self::new_inner(ae_title.clone(), stream).await?);
 		debug!("New connection from {peer}");
-		let context = crate::context::Context::new(inner.0.presentation_contexts());
-		Ok(Association::new(local,peer,inner,context))
+		let srv = Self::new_inner(ae_title.clone(), stream).await?;
+		let context = crate::context::Context::new(srv.presentation_contexts());
+
+		Ok(Association::new(local,peer,Server(Some(srv)),context))
 	}
 
 	async fn new_inner<'a>(ae_title:Cow<'a,str>, scu_stream: TcpStream) -> Result<AsyncServerAssociation<TcpStream>>
@@ -46,46 +41,61 @@ impl Server {
 		}
 		options.establish_async(scu_stream).await.map_err(|e|e.into())
 	}
-	async fn send_file(&mut self, filename: PathBuf, offset: u64, pc_id: u8) -> tokio::io::Result<()>
-	{
-		let mut source = tokio::fs::File::open(filename).await?;
-		source.seek(SeekFrom::Start(offset)).await?;
-		let mut sink = self.0.send_pdata(pc_id);
-		tokio::io::copy(&mut source,&mut sink).await.map(|_|())
-	}
-
 }
 
 impl ReceivePdu for Server {
-	async fn read_pdu(&mut self) -> Result<Pdu> {self.0.receive().await.map_err(|e|e.into())}
+	async fn read_pdu(&mut self) -> Result<Pdu> {
+		match self.0 {
+			None => panic!("trying to use a checked out connection"),
+			Some(ref mut s) => s.receive().await.map_err(|e|e.into()),
+		}
+	}
 
 	async fn read_pipe(&mut self, prelude: Vec<u8>, ts: &TransferSyntax) -> Result<InMemDicomObject>
 	{
-		let source = SyncIoBridge::new(self.0.receive_pdata());
-		let mut buffer = Cursor::new(prelude);
+		let mut checkout = self.0.take().expect("trying to check out already checked out connection");
+		let ts = ts.uid();
 
-		InMemDicomObject::read_dataset_with_ts(Read::chain(&mut buffer,source),ts)
-			.map_err(|e| e.into())
+		let (o,checkout) = spawn_blocking(move || {
+			let source = SyncIoBridge::new(checkout.receive_pdata());
+			let source = Read::chain(Cursor::new(prelude), source);
+			InMemDicomObject::read_dataset_with_ts(source,TransferSyntaxRegistry::default().get(ts).unwrap())
+				.map(|o|(o,checkout))
+		}).await??;
+		self.0 = Some(checkout);
+		Ok(o)
 	}
 }
 
 impl SendPdu for Server {
 	async fn send_obj(&mut self, pc_id: u8, ts: &TransferSyntax, o: InMemDicomObject) -> Result<()> {
-		let mut sink = self.0.send_pdata(pc_id);
-		let mut source = Cursor::new(Vec::new());
-		o.write_dataset_with_ts(&mut source, ts)
-			.with_whatever_context::<_,_,DimseError>(|e|format!("Failed sending object: {e}"))?;
-		source.seek(SeekFrom::Start(0)).await?;
-		tokio::io::copy(&mut source, &mut sink).await.map(|_|())
-			.with_whatever_context(|e|format!("Failed sending object: {e}"))
+		// check out the association
+		let mut checkout = self.0.take().expect("trying to check out already checked out connection");
+		let ts = ts.uid();
+
+		let checkout = spawn_blocking(move || {
+			let mut sink = SyncIoBridge::new(checkout.send_pdata(pc_id));
+			let r = o.write_dataset_with_ts(&mut sink, TransferSyntaxRegistry::default().get(ts).unwrap())
+				.with_whatever_context::<_,_,DimseError>(|e|format!("Failed sending object: {e}"));
+			drop(sink);
+			r.map(|_|checkout)
+		}).await??;
+		self.0 = Some(checkout);
+		Ok(())
 	}
 
 	async fn send_pdu(&mut self, pdu: &Pdu) -> Result<()> {
-		self.0.send(pdu).await.map_err(|e|e.into())
+		match self.0 {
+			Some(ref mut a) => a.send(pdu).await.map_err(|e|e.into()),
+			None => panic!("trying to write into checked out connection")
+		}
 	}
 
 	fn get_sink(&mut self, pc_id: u8) -> Result<crate::association::Sink<'_>> {
-		let sink = Box::new(self.0.send_pdata(pc_id));
+		let sink = match self.0 {
+			None => panic!("trying to use a checked out connection"),
+			Some(ref mut s) => Box::new(s.send_pdata(pc_id)),
+		};
 		Ok(crate::association::Sink::Async(sink))
 	}
 }

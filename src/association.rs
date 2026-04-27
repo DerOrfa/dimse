@@ -4,8 +4,8 @@
 use std::io::Seek;
 use std::{format, vec};
 use crate::definitions::{RequestCode, StatusOk};
-use crate::error::DimseError::{UnexpectedEmptyMsg, UnexpectedMessageType, UnexpectedNonDataPdu};
-use crate::error::{DimseError, Result};
+use crate::error::DimseError::{self,UnexpectedEmptyMsg, UnexpectedMessageType, UnexpectedNonDataPdu};
+use crate::error::Result;
 use crate::msg::{MessageType, Request};
 use crate::payload::{Attachment, Payload};
 use crate::pending_receive::PendingReceive;
