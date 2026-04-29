@@ -90,17 +90,16 @@ impl<B> Task<B> where B:FileAccess
 					let mut failed:HashSet<_> = Default::default();
 					let mut fail_comment = Option::<String>::None;
 					if instances.is_empty() {return Err(failure(FailureCode::NoSuchSOPInstance));}
-					
-					let (mut succeeded,mut warn,mut fail,mut to_do) = (0,0,0,instances.len() as u16);
+					let mut pend = pending(0, 0, 0, instances.len() as u16);
 					for instance in instances {
 						match self.c_store(&instance).await{
 							Ok(s) => {
 								match s {
-									StatusOk::Success(_) => {succeeded += 1;},
+									StatusOk::Success(_) => {pend.succeed();},
 									StatusOk::Warning (StatusWarning{ offending_element, comment, .. }) => {
-										warn += 1;
+										pend.warn();
 										for e in offending_element{
-											failed.insert(e);	
+											failed.insert(e);
 										}
 										fail_comment = fail_comment.xor(comment.clone());
 									}
@@ -109,11 +108,10 @@ impl<B> Task<B> where B:FileAccess
 							},
 							Err(e) => {
 								fail_comment = fail_comment.xor(Some(e.to_string()));
-								fail += 1;
+								pend.fail();
 							}
 						}
-						to_do -= 1;
-						let resp = request.make_response(pending(succeeded, warn, fail, to_do));
+						let resp = request.make_response(pend.clone());
 						self.assoc.send_payload(resp.try_into()?).await?;
 					}
 					if failed.is_empty(){Ok(success().into())}
@@ -129,7 +127,7 @@ impl<B> Task<B> where B:FileAccess
 			RequestCode::C_FIND => {
 				if let Attachment::Obj(ident) = request.take_attachment(){
 					let instances =  self.backend.find(&ident).await?;
-					let (mut succeeded,mut warn,mut to_do) = (0,0,instances.len() as u16);
+					let mut pend = pending(0, 0, 0, instances.len() as u16);
 					let mut missed_el = HashSet::new();
 					for instance in instances
 					{
@@ -137,7 +135,7 @@ impl<B> Task<B> where B:FileAccess
 							self.backend.get_path(&instance).await?
 						).map_err(|e|failure(FailureCode::ProcessingFailure).comment(e))?;
 						let mut ret = InMemDicomObject::new_empty();
-						let mut do_warn =false;
+						let mut do_warn=false;
 						for e in ident.iter() // got though all key attributes in the identifier
 							.filter(|e|e.tag()!=tags::QUERY_RETRIEVE_LEVEL)
 							.filter(|e|e.tag()!=tags::QUERY_RETRIEVE_VIEW)
@@ -148,15 +146,14 @@ impl<B> Task<B> where B:FileAccess
 							let tag = e.tag();
 							if let Some(found) = ob.take(tag) && !found.is_empty(){
 								ret.put(found);
+								do_warn = true;
 							} else {
 								missed_el.insert(tag);
-								do_warn=true;
 							}
 						}
-						if do_warn {warn+=1}else { succeeded+=1 }
-						to_do -= 1;
+						if do_warn{pend.warn();}else{ pend.succeed(); }
 						let resp = request
-							.make_response(pending(succeeded, warn, 0, to_do))
+							.make_response(pend.clone())
 							.with_identifier(ret);
 						self.assoc.send_payload(resp.try_into()?).await?;
 					}

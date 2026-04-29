@@ -55,6 +55,26 @@ pub fn failure(code:FailureCode) -> StatusFailure {StatusFailure{code, ..Default
 
 ////////////////////// Tooling /////////////////////////
 
+impl StatusPending
+{
+	pub(crate) fn succeed(&mut self) -> &Self{
+		self.succeeded.as_mut().map(|s|*s+=1);
+		self.to_do.as_mut().map(|s|*s-=1);
+		self
+	}
+	pub(crate) fn warn(&mut self) -> &Self{
+		self.offset=1;
+		self.warn.as_mut().map(|s|*s+=1);
+		self.to_do.as_mut().map(|s|*s-=1);
+		self
+	}
+	pub(crate) fn fail(&mut self) -> &Self{
+		self.fail.as_mut().map(|s|*s+=1);
+		self.to_do.as_mut().map(|s|*s-=1);
+		self
+	}
+}
+
 /////////////////////// Code ///////////////////////////
 pub(crate) trait Code
 {
