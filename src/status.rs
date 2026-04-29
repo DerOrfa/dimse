@@ -167,7 +167,7 @@ impl Code for Result<StatusOk,StatusFailure> {
 	}
 	fn try_from_code(code:u16) -> Option<Self> {
 		match code {
-			0x0000 | 0x0001 ..= 0x00ff => Ok(StatusOk::try_from_code(code)).transpose(),
+			0x0000 | 0x0001 ..= 0x00ff | 0xFF00..=0xFFff => Ok(StatusOk::try_from_code(code)).transpose(),
 			0x0100 ..=0xfe00 => StatusFailure::try_from_code(code).map(|f| Err(f)),
 			_ => None
 		}
