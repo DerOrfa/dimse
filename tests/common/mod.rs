@@ -121,13 +121,13 @@ impl FileAccess for MultiFileAccess {
 		{
 			Ok(vec![instance])
 		} else if let Some(series) = Taker::get_opt(&ident,tags::SERIES_INSTANCE_UID)
-			.map_err(|_| failure(FailureCode::NoSuchAttribute).offending([tags::STUDY_INSTANCE_UID]))?
+			.map_err(|_| failure(FailureCode::NoSuchAttribute).offending([tags::SERIES_INSTANCE_UID]))?
 		{
 			Ok(self.series.lock().unwrap().get::<String>(&series).unwrap().clone())
 		} else if let Some(study) = Taker::get_opt(&ident,tags::STUDY_INSTANCE_UID)
 			.map_err(|_| failure(FailureCode::NoSuchAttribute).offending([tags::STUDY_INSTANCE_UID]))?
 		{
-			Ok(self.series.lock().unwrap().get::<String>(&study).unwrap().clone())
+			Ok(self.studies.lock().unwrap().get::<String>(&study).unwrap().clone())
 		} else { panic!("invalid ident") }
 
 	}
