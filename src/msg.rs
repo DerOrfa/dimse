@@ -7,6 +7,7 @@ use crate::error::DimseError;
 use crate::payload::{Attachment, Payload};
 use crate::{io, lazy_dump_to_string, Taker};
 use dicom::core::{DataElement, PrimitiveValue, VR};
+use dicom::core::header::HasLength;
 use dicom::core::smallvec::SmallVec;
 use dicom::dicom_value;
 use dicom::object::{open_file, InMemDicomObject};
@@ -255,13 +256,20 @@ impl Message
 		let dataset_type:u16 = Taker::take(&mut self.obj, tags::COMMAND_DATA_SET_TYPE)?;
 		if dataset_type != 0x0101
 		{
-			self.attachment = Attachment::Obj(ass.fetch_obj().await?)
+			self.attachment = ass.fetch_attachment().await?
 		};
 		Ok(())
 	}
 	pub fn attach(&mut self,ident:impl IntoIterator<Item = InMemElement>)
 	{
-		self.attachment= Attachment::Obj(InMemDicomObject::from_element_iter(ident));
+		// inspect the size of the object while failing on the safe side
+		// if any element has undefined size will be > 0xFFFF_FFFF and summ will saturate
+		// aka. only safe small object are attached as such
+		let mut size:usize = 0;
+		let iter = ident.into_iter().inspect(|e|size=size.saturating_add(e.length().0 as usize));
+		let obj = InMemDicomObject::from_element_iter(iter);
+
+		self.attachment= if size > 1024*1024 {Attachment::Obj(obj)} else {Attachment::SmallObj(obj)};
 	}
 
 	/// Attach a file to the request (e.g. C-STORE).
@@ -337,9 +345,13 @@ impl Message
 		};
 		Ok(Payload {command,attachment:self.attachment})
 	}
-	pub(crate) fn take_attachment(&mut self) -> Attachment
+	pub(crate) fn take_attachment_obj(&mut self) -> Option<InMemDicomObject>
 	{
-		std::mem::take(&mut self.attachment)
+		match std::mem::take(&mut self.attachment){
+			Attachment::SmallObj(o)|Attachment::Obj(o) => Some(o),
+			Attachment::None => None,
+			_ => panic!("Invalid attachment type")
+		}
 	}
 	pub(crate) fn attachment(&self) -> &Attachment {&self.attachment}
 }

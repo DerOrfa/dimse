@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt::{Debug, Display, Formatter};
 use dicom::core::Tag;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 use crate::error::DimseError;
 
 pub(crate) use crate::definitions::{FailureCode, WarningCode};

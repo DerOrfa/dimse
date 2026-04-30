@@ -3,7 +3,7 @@ use crate::association::{Association,ReceiveMessage, SendPayload};
 use crate::context::Context;
 use crate::definitions::{FailureCode, RequestCode, WarningCode};
 use crate::msg::{MessageType, Request, Response};
-use crate::payload::{Attachment, Payload};
+use crate::payload::Payload;
 use crate::{io, Taker};
 use dicom_dictionary_std::tags;
 use dicom_ul::{FullAeAddr};
@@ -68,7 +68,7 @@ impl<B> Task<B> where B:FileAccess
 		{
 			RequestCode::C_STORE => {
 				debug!("Got STORE request");
-				if let Attachment::Obj(o) = request.take_attachment(){
+				if let Some(o) = request.take_attachment_obj(){
 					let ts = Taker::get_opt(&o,tags::TRANSFER_SYNTAX_UID).transpose()
 						.unwrap_or(self.assoc.context.select_ts(request.pc_id).map(|s|s.uid().to_string()))
 						.map_err(|e|{
@@ -85,7 +85,7 @@ impl<B> Task<B> where B:FileAccess
 			// Query/Retrieve Service Class
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/chapter_C.html
 			RequestCode::C_GET => {
-				if let Attachment::Obj(o) = request.take_attachment(){
+				if let Some(o) = request.take_attachment_obj(){
 					let instances = self.backend.lookup(&o).await?;
 					let mut failed:HashSet<_> = Default::default();
 					let mut fail_comment = Option::<String>::None;
@@ -125,7 +125,7 @@ impl<B> Task<B> where B:FileAccess
 				} else { Err(failure(FailureCode::InvalidArgument)) }
 			}
 			RequestCode::C_FIND => {
-				if let Attachment::Obj(ident) = request.take_attachment(){
+				if let Some(ident) = request.take_attachment_obj(){
 					let instances =  self.backend.find(&ident).await?;
 					let mut pend = pending(0, 0, 0, instances.len() as u16);
 					let mut missed_el = HashSet::new();

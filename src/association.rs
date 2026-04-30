@@ -24,7 +24,7 @@ use dicom_dictionary_std::tags;
 use dicom_dictionary_std::uids;
 use futures::StreamExt;
 use futures::stream::FusedStream;
-use tokio::io::{AsyncSeekExt, AsyncWrite};
+use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, trace, warn};
 use crate::client::RetrieveLevel;
 use crate::definitions::RequestCode::{C_FIND, C_GET, C_MOVE, C_STORE};
@@ -117,7 +117,7 @@ impl<A> Association<A>
 			}
 		}
 	}
-	pub(crate) async fn fetch_obj(&mut self) -> Result<InMemDicomObject> where A: ReceivePdu
+	pub(crate) async fn fetch_attachment(&mut self) -> Result<Attachment> where A: ReceivePdu
 	{
 		let prelude = match self.inner.read_pdu().await?
 		{
@@ -134,10 +134,12 @@ impl<A> Association<A>
 			InMemDicomObject::read_dataset_with_ts(Cursor::<Vec<u8>>::new(prelude),ts)
 				.with_whatever_context(|e|
 					format!("Failed parsing object data from {}:{}",self.peer_address(),e))
+				.map(|o|Attachment::SmallObj(o))
 		} else {
 			self.inner.read_pipe(prelude, ts).await
 				.with_whatever_context(|e|
 					format!("Failed parsing streamed object data from {}:{}",self.peer_address(),e))
+				.map(|o|Attachment::Obj(o))
 		}
 	}
 	pub async fn receive_response(&mut self, source_rq: RequestCode) -> Result<msg::Response>
@@ -246,7 +248,7 @@ impl<A> Association<A>
 			{
 				MessageType::Request(mut req) => { // this should be a C_STORE request
 					if req.command == C_STORE {
-						if let Attachment::Obj(o) = req.take_attachment()
+						if let Some(o) = req.take_attachment_obj()
 						{
 							let ts: Option<String> = Taker::get_opt(&o, tags::TRANSFER_SYNTAX_UID)?;
 							let ts = ts.as_deref().unwrap_or(self.context.select_ts(req.pc_id)?.uid());
@@ -289,8 +291,16 @@ impl<A> SendPayload for Association<A> where A:SendPdu
 					.with_whatever_context(|e|
 						format!("Failed sending file {} to {}: {e}",path.display(), self.local))
 			}
+			Attachment::SmallObj(o) => {
+				let mut buf = Cursor::new(Vec::new());
+				o.write_dataset_with_ts(&mut buf,self.context.select_ts(pc_id)?)?;
+				match self.inner.get_sink(pc_id)?{
+					Sink::Async(mut a) => a.write_all(buf.get_ref()).await,
+					Sink::Sync(mut s) => s.write_all(buf.get_ref()),
+				}.map_err(|e| e.into())
+			}
 			Attachment::Obj(o) => {
-				debug!("{} sending object to {}:\n{}", self.local, self.peer, lazy_dump_to_string(&o).unwrap());
+				debug!("{} sending large object to {}", self.local, self.peer);
 				let ts = self.context.select_ts(pc_id)?;
 				self.inner.send_obj(pc_id, ts, o).await
 			},
@@ -323,8 +333,11 @@ impl<A> ReceiveMessage for Association<A> where A:ReceivePdu {
 						r.attachment()
 					}
 				};
-				if let Attachment::Obj(o) = att {
-					trace!("With attachment\n{}", lazy_dump_to_string(o).unwrap_or("".to_string()));
+				match att {
+					Attachment::SmallObj(o) =>
+						trace!("With attachment\n{}", lazy_dump_to_string(o).unwrap_or("".to_string())),
+					Attachment::Obj(_) => trace!("With attached object"),
+					_ => {}
 				}
 				m
 			}).with_whatever_context(|e|format!("Failed getting message from {} ({e})", self.peer_address()))

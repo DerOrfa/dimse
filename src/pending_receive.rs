@@ -10,7 +10,7 @@ use snafu::ResultExt;
 use tracing::{debug, error, trace, warn};
 use crate::error::DimseError::UnexpectedMessage;
 use crate::msg::{MessageType, Response};
-use crate::payload::{Attachment, Payload};
+use crate::payload::Payload;
 use crate::{io, Taker};
 use crate::definitions::RequestCode;
 use crate::status::{success, StatusOk, StatusPending};
@@ -103,11 +103,11 @@ impl<'a,A> PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin
 				self.warn = warn;
 				self.failed = fail;
 				self.to_do = to_do;
-				response.take_attachment()
+				response.take_attachment_obj()
 			},
 			Ok(StatusOk::Warning(w)) => {
 				warn!("Got status {w}");
-				response.take_attachment()
+				response.take_attachment_obj()
 			}
 			Err(e) => {
 				self.terminated = true;
@@ -115,11 +115,7 @@ impl<'a,A> PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin
 					format!("Failure reading response for {}: {e}", self.request))
 			}
 		};
-		Ok(Some(match a
-		{
-			Attachment::Obj(o) => o,
-			_ => InMemDicomObject::new_empty(),
-		}))
+		Ok(a)
 	}
 
 }
@@ -191,7 +187,7 @@ impl<'a, A> Stream for PendingStore<'a, A> where Association<A>:ReceiveMessage +
 					debug!("StoreStream got {req}");
 					// ready above bails if we're pending, so this should be safe
 					let context = &this.inner.get_association().context;
-					if let Attachment::Obj(o) = req.take_attachment()
+					if let Some(o) = req.take_attachment_obj()
 					{
 						let ts: Option<String> = Taker::get_opt(&o, tags::TRANSFER_SYNTAX_UID)?;
 						let ts = ts.as_deref().unwrap_or(context.select_ts(req.pc_id)?.uid());
