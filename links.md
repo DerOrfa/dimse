@@ -10,6 +10,9 @@ The Query/Retrieve Information Model is identified by the SOP Class negotiated a
 - This SOP Class identifies the class of the Query/Retrieve Information Model (i.e., not the SOP Class of the stored SOP Instances for which the SCP has information).
 - [Matching](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.2.2.2.html)
 
+## Command Fields
+https://dicom.nema.org/dicom/2013/output/chtml/part07/chapter_E.html
+
 ## [Query Retrieve Service Class ](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/chapter_C.html)
 - [Keys](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.6.2.html#table_C.6-5)
 - [Additional Query/Retrieve Attributes](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.3.4.html)
@@ -22,8 +25,9 @@ The Query/Retrieve Information Model is identified by the SOP Class negotiated a
 - [C-FIND](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.2.html#table_9.3-3)
 - [C_FIND_RSP](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.2.2.html#table_9.3-4)
 - [C-CANCEL-FIND-RQ](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.2.3.html#table_9.3-5)
-#### Response status
-https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.html#table_C.4-1
+#### Response
+[Status](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.html#table_C.4-1)
+[Identifier Structure](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.html#sect_C.4.1.1.3.2)
 
 ## C-MOVE
 - [Operation](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.2.html#sect_C.4.2.1)

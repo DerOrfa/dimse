@@ -19,6 +19,8 @@ use tracing::{debug, error};
 use crate::error::DimseError::UnsupportedPC;
 use crate::io::FileAccess;
 use crate::status::*;
+use futures::{Stream, TryStreamExt};
+use tokio::pin;
 
 pub struct Task<B> where B:FileAccess
 {
@@ -86,12 +88,13 @@ impl<B> Task<B> where B:FileAccess
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/chapter_C.html
 			RequestCode::C_GET => {
 				if let Some(o) = request.take_attachment_obj(){
-					let instances = self.backend.lookup(&o).await?;
+					let instances = self.backend.lookup(&o)?;
 					let mut failed:HashSet<_> = Default::default();
 					let mut fail_comment = Option::<String>::None;
-					if instances.is_empty() {return Err(failure(FailureCode::NoSuchSOPInstance));}
-					let mut pend = pending(0, 0, 0, instances.len() as u16);
-					for instance in instances {
+					let mut pend = pending(instances.size_hint().1.map(|e|e as u16));
+					pin!(instances);
+
+					while let Some(instance) = instances.try_next().await? {
 						match self.c_store(&instance).await{
 							Ok(s) => {
 								match s {
@@ -126,10 +129,12 @@ impl<B> Task<B> where B:FileAccess
 			}
 			RequestCode::C_FIND => {
 				if let Some(ident) = request.take_attachment_obj(){
-					let instances =  self.backend.find(&ident).await?;
-					let mut pend = pending(0, 0, 0, instances.len() as u16);
+					let instances =  self.backend.find(&ident)?;
+					let mut pend = pending(instances.size_hint().1.map(|l|l as u16));
 					let mut missed_el = HashSet::new();
-					for instance in instances
+
+					pin!(instances);
+					while let Some(instance) = instances.try_next().await?
 					{
 						let mut ob= dicom::object::open_file(
 							self.backend.get_path(&instance).await?

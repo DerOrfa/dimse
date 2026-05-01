@@ -10,6 +10,7 @@ use snafu::{GenerateImplicitData, ResultExt};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use dicom_dictionary_std::tags;
+use futures::Stream;
 use tokio::sync::mpsc::Receiver;
 use tracing::error;
 use crate::definitions::FailureCode;
@@ -46,13 +47,17 @@ impl<'a> Read for PipeDataReader<'a> {
 	}
 }
 
+pub type ItemResult<I> = std::result::Result<I,StatusFailure>;
+
 pub trait FileAccess: Clone + Send + Sync
 {
 	type Item:Send + Sync;
 	fn get_path(&self, uid:&Self::Item) -> impl Future<Output = std::result::Result<PathBuf, StatusFailure>> + Send;
 	fn store_file(&mut self, file:FileDicomObject<InMemDicomObject>) -> impl Future<Output = Status> + Send;
-	fn lookup(&self, ident: &InMemDicomObject) -> impl Future<Output = std::result::Result<Vec<Self::Item>, StatusFailure>> + Send;
-	fn find(&self, ident: &InMemDicomObject) -> impl Future<Output = std::result::Result<Vec<Self::Item>, StatusFailure>> + Send;
+	fn lookup<'a>(&self, ident: &InMemDicomObject) 
+		-> std::result::Result<impl Stream<Item=ItemResult<Self::Item>> + Send + 'a, StatusFailure>;
+	fn find<'a>(&self, ident: &InMemDicomObject) 
+		-> std::result::Result<impl Stream<Item=ItemResult<Self::Item>> + Send + 'a, StatusFailure>;
 }
 
 pub async fn read_pipe(source: &mut Option<Receiver<PDataValue>>, prelude: Vec<u8>, ts:String)

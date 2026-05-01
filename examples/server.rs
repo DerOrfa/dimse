@@ -1,11 +1,12 @@
+use futures::StreamExt;
 use clap::builder::PossibleValue;
 use clap::{Parser, ValueEnum};
 use dicom::object::{FileDicomObject, InMemDicomObject, OpenFileOptions};
 use dicom_dictionary_std::tags;
-use dicom_ul::{AeAddr, FullAeAddr};
+use dicom_ul::AeAddr;
 use dimse::definitions::FailureCode;
 use dimse::error::DimseError;
-use dimse::io::FileAccess;
+use dimse::io::{FileAccess, ItemResult};
 use dimse::status::{failure, Comment, Offending, Status, StatusFailure};
 use dimse::Taker;
 use glob::glob;
@@ -17,9 +18,10 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use futures::{stream, Stream};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
-use tokio::task::JoinSet;
+use tokio::task::{spawn_blocking, JoinSet};
 use tokio::{signal, spawn};
 use tracing::{info, Level};
 
@@ -134,35 +136,49 @@ impl FileAccess for Accessor
 		todo!()
 	}
 
-	async fn lookup(&self, ident: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
-		if let Some(instance) = Taker::get_opt(&ident,tags::SOP_INSTANCE_UID)
-			.map_err(|_| failure(FailureCode::NoSuchAttribute).offending([tags::SOP_INSTANCE_UID]))?
-		{
-			Ok(vec![instance])
-		} else if let Some(series) = Taker::get_opt(&ident,tags::SERIES_INSTANCE_UID)
-			.map_err(|_| failure(FailureCode::NoSuchAttribute).offending([tags::SERIES_INSTANCE_UID]))?
-		{
-			Ok(self.series.read().await.get::<String>(&series).unwrap().clone())
-		} else if let Some(study) = Taker::get_opt(&ident,tags::STUDY_INSTANCE_UID)
-			.map_err(|_| failure(FailureCode::NoSuchAttribute).offending([tags::STUDY_INSTANCE_UID]))?
-		{
-			Ok(self.studies.read().await.get::<String>(&study).unwrap().clone())
-		} else { panic!("invalid ident") }
+	fn lookup<'a>(&self, ident: &InMemDicomObject) -> Result<impl Stream<Item=ItemResult<Self::Item>> + Send + 'a, StatusFailure> {
+		let sel_instance = Taker::get_opt(&ident,tags::SOP_INSTANCE_UID)?;
+		let sel_series = Taker::get_opt(&ident,tags::SERIES_INSTANCE_UID)?;
+		let sel_study = Taker::get_opt(&ident,tags::STUDY_INSTANCE_UID)?;
+		let series = self.series.clone();
+		let studies = self.studies.clone();
+		let stream = stream::once(async move {
+			if let Some(instance) = sel_instance
+			{
+				stream::iter(vec![Ok(instance)])
+			} else if let Some(sel_series) = sel_series	{
+				let series:Vec<_> = series.read().await.get::<String>(&sel_series).unwrap().clone()
+					.into_iter().map(Ok::<_,StatusFailure>).collect();
+				stream::iter(series)
+			} else if let Some(sel_study) = sel_study {
+				let studies:Vec<_> = studies.read().await.get::<String>(&sel_study).unwrap().clone()
+					.into_iter().map(Ok::<_,StatusFailure>).collect();
+				stream::iter(studies)
+			}
+			else { panic!("invalid ident") }
+		});
+		Ok(stream.flatten())
 	}
 
-	async fn find(&self, ident: &InMemDicomObject) -> Result<Vec<Self::Item>, StatusFailure> {
-		if let Some(name_glob) = Taker::get_opt(&ident,tags::PATIENT_NAME)?{
-			let lock = self.files.read().await;
-			let found = lock.iter()
-				.map(|(uid,path)|(uid,path,dicom::object::open_file(path).unwrap()))
-				.filter(|(_,_,o)|{
-					let name:String = Taker::get(o,tags::PATIENT_NAME).unwrap();
-					glob_match::glob_match(&name_glob as &String,&name)
-				})
-				.map(|(uid,_,_)|uid.to_string());
-			Ok(found.collect())
-		} else { Err(failure(FailureCode::InvalidArgument).comment("Can only look up PatientName")) }
-
+	fn find<'a>(&self, ident: &InMemDicomObject) -> Result<impl Stream<Item=ItemResult<Self::Item>> + Send + 'a, StatusFailure>{
+		let name_glob = Taker::get_opt(&ident,tags::PATIENT_NAME)?.ok_or(failure(FailureCode::NoSuchAttribute).offending([tags::PATIENT_NAME]))?;
+		let instances = self.files.clone();
+		let instances_stream = stream::once(async move {
+			let v:Vec<_> = instances.read().await.clone().into_iter().map(|(uid,p)|(uid,p, String::clone(&name_glob)))
+				.collect();
+			stream::iter(v)
+		})
+			.flatten()
+			.filter_map( async move|(uid,p,name_glob)|{
+				let obj = spawn_blocking(
+					move || OpenFileOptions::new().read_until(tags::PIXEL_DATA).open_file(p.clone())
+						.map_err(|e| failure(FailureCode::Failure).comment(e))).await.unwrap();
+				obj.map(|o|{
+					let name: String = Taker::get(&o, tags::PATIENT_NAME).unwrap();
+					glob_match::glob_match(name_glob.as_str(), &name).then(|| uid)
+				}).transpose()
+			});
+		Ok(instances_stream)
 	}
 }
 

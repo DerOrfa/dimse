@@ -40,14 +40,16 @@ pub struct StatusFailure{
 }
 
 pub fn success() -> StatusSuccess {Default::default()}
-pub fn pending(succeeded:u16, warn:u16, fail:u16, to_do:u16) -> StatusPending {
-	StatusPending{
-		succeeded: Some(succeeded),
-		warn: Some(warn),
-		fail: Some(fail),
-		to_do: Some(to_do),
-		offset: 0,
-	}
+pub fn pending(to_do:Option<u16>) -> StatusPending {
+	if let Some(to_do) = to_do {
+		StatusPending {
+			succeeded: Some(0),
+			warn: Some(0),
+			fail: Some(0),
+			to_do: Some(to_do),
+			offset: 0,
+		}
+	} else { Default::default() }
 }
 pub fn warning(code: WarningCode) -> StatusWarning {StatusWarning{code, ..Default::default()}}
 pub fn failure(code:FailureCode) -> StatusFailure {StatusFailure{code, ..Default::default()}}
