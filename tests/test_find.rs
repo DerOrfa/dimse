@@ -16,7 +16,7 @@ mod common;
 #[snafu::report]
 async fn test_find() -> Result<()>
 {
-	tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
+	//tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
 
 	let mut series_a = dcm::synthesize_series(&dcm::UidSynthesizer::default(), 1, 1, 10);
 	let series_b = dcm::synthesize_series(&dcm::UidSynthesizer::default(),2,1,10);

@@ -57,7 +57,7 @@ pub trait FileAccess: Clone + Send + Sync
 	fn lookup<'a>(&self, ident: &InMemDicomObject) 
 		-> std::result::Result<impl Stream<Item=ItemResult<Self::Item>> + Send + 'a, StatusFailure>;
 	fn find<'a>(&self, ident: &InMemDicomObject) 
-		-> std::result::Result<impl Stream<Item=ItemResult<Self::Item>> + Send + 'a, StatusFailure>;
+		-> std::result::Result<impl Stream<Item=ItemResult<InMemDicomObject>> + Send + 'a, StatusFailure>;
 }
 
 pub async fn read_pipe(source: &mut Option<Receiver<PDataValue>>, prelude: Vec<u8>, ts:String)

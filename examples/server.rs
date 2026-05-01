@@ -160,22 +160,23 @@ impl FileAccess for Accessor
 		Ok(stream.flatten())
 	}
 
-	fn find<'a>(&self, ident: &InMemDicomObject) -> Result<impl Stream<Item=ItemResult<Self::Item>> + Send + 'a, StatusFailure>{
+	fn find<'a>(&self, ident: &InMemDicomObject) -> Result<impl Stream<Item=ItemResult<InMemDicomObject>> + Send + 'a, StatusFailure>{
 		let name_glob = Taker::get_opt(&ident,tags::PATIENT_NAME)?.ok_or(failure(FailureCode::NoSuchAttribute).offending([tags::PATIENT_NAME]))?;
 		let instances = self.files.clone();
 		let instances_stream = stream::once(async move {
-			let v:Vec<_> = instances.read().await.clone().into_iter().map(|(uid,p)|(uid,p, String::clone(&name_glob)))
+			let v:Vec<_> = instances.read().await.clone().into_iter().map(|(_,p)|(p, String::clone(&name_glob)))
 				.collect();
 			stream::iter(v)
 		})
 			.flatten()
-			.filter_map( async move|(uid,p,name_glob)|{
+			.filter_map( async move|(p,name_glob)|{
 				let obj = spawn_blocking(
 					move || OpenFileOptions::new().read_until(tags::PIXEL_DATA).open_file(p.clone())
-						.map_err(|e| failure(FailureCode::Failure).comment(e))).await.unwrap();
+						.map_err(|e| failure(FailureCode::Failure).comment(e))
+				).await.unwrap();
 				obj.map(|o|{
 					let name: String = Taker::get(&o, tags::PATIENT_NAME).unwrap();
-					glob_match::glob_match(name_glob.as_str(), &name).then(|| uid)
+					glob_match::glob_match(name_glob.as_str(), &name).then_some(o.into_inner())
 				}).transpose()
 			});
 		Ok(instances_stream)

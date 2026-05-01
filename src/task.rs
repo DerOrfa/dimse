@@ -134,11 +134,8 @@ impl<B> Task<B> where B:FileAccess
 					let mut missed_el = HashSet::new();
 
 					pin!(instances);
-					while let Some(instance) = instances.try_next().await?
+					while let Some(mut ob) = instances.try_next().await?
 					{
-						let mut ob= dicom::object::open_file(
-							self.backend.get_path(&instance).await?
-						).map_err(|e|failure(FailureCode::ProcessingFailure).comment(e))?;
 						let mut ret = InMemDicomObject::new_empty();
 						let mut do_warn=false;
 						for e in ident.iter() // got though all key attributes in the identifier
