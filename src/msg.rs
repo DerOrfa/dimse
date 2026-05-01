@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::association::{Association, ReceivePdu};
 use crate::error::DimseError;
 use crate::payload::{Attachment, Payload};
-use crate::{io, lazy_dump_to_string, Taker};
+use crate::{io, lazy_attachment_to_string, lazy_dump_to_string, Taker};
 use dicom::core::{DataElement, PrimitiveValue, VR};
 use dicom::core::header::HasLength;
 use dicom::core::smallvec::SmallVec;
@@ -147,7 +147,7 @@ impl TryInto<Payload> for Response
 					let e = SmallVec::<[_;2]>::from_iter(offending_element);
 					self.inner.obj.put(InMemElement::new(tags::OFFENDING_ELEMENT,VR::AT,PrimitiveValue::Tags(e)));
 				};
-				comment.map(|c|self.inner.obj.put(InMemElement::new(tags::ERROR_COMMENT,VR::AT, c)));
+				comment.map(|c|self.inner.obj.put(InMemElement::new(tags::ERROR_COMMENT,VR::AT, c)));//@todo check for other comments
 			}
 			Ok(StatusOk::Pending (StatusPending{ succeeded, warn, fail, to_do, .. })) => {
 				let attr = [
@@ -333,7 +333,8 @@ impl Message
 		self.obj.put(DataElement::new(tags::COMMAND_DATA_SET_TYPE,VR::US,dicom_value!(U16,att_code)));
 		debug!("Preparing {title} {self}");
 		let obj = InMemDicomObject::command_from_element_iter(self.obj.into_iter());
-		lazy_dump_to_string(&obj).and_then(|s|Some(debug!("{s}")));
+		lazy_dump_to_string(&obj).map(|s|debug!("{s}"));
+		lazy_attachment_to_string(&self.attachment).map(|s|debug!("{s}"));
 		obj.write_dataset_with_ts(&mut data, &IMPLICIT_VR_LITTLE_ENDIAN.erased())
 			.with_whatever_context::<_,_,DimseError>(|e|
 				format!("Preparation of message for sending failed ({e})"))?;

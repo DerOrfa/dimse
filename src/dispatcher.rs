@@ -10,8 +10,9 @@ use tracing::{debug, error, info, trace, warn};
 use crate::association::{Association, SendPayload};
 use crate::error::DimseError::UnexpectedResponse;
 use crate::io::FileAccess;
+use crate::lazy_attachment_to_string;
 use crate::msg::{Message, MessageType};
-use crate::payload::{Payload};
+use crate::payload::{Attachment, Payload};
 use crate::server::Server;
 use crate::task::{Task, TaskHandle};
 use super::error::{DimseError, Result};
@@ -139,6 +140,7 @@ impl<B> Dispatcher<B> where B:FileAccess
 						MessageType::Request(mut req) => {
 							req.read_attachment(&mut self.ass).await?;
 							debug!("Starting task to handle {req}");
+							lazy_attachment_to_string(req.attachment()).map(|s|debug!("{s}"));
 							let req_id = req.id;
 							let task = Task::spawn(
 								self.ass.peer.clone(), self.ass.local.clone(),
@@ -154,7 +156,7 @@ impl<B> Dispatcher<B> where B:FileAccess
 							let (id,task) = self.tasks.iter()
 								.find(|(_,t)|t.is_relevant(resp.id))
 								.ok_or(UnexpectedResponse {name:resp.to_string()})?;
-							trace!("Forwarding {resp} to task {id}");
+							debug!("Forwarding {resp} to task {id}");
 							task.data_sink.send(resp).await?;
 						}
 					}

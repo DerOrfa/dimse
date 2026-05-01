@@ -148,9 +148,9 @@ impl<B> Task<B> where B:FileAccess
 							let tag = e.tag();
 							if let Some(found) = ob.take(tag) && !found.is_empty(){
 								ret.put(found);
-								do_warn = true;
 							} else {
 								missed_el.insert(tag);
+								do_warn = true;
 							}
 						}
 						if do_warn{pend.warn();}else{ pend.succeed(); }
@@ -161,7 +161,7 @@ impl<B> Task<B> where B:FileAccess
 					}
 					if missed_el.is_empty()
 					{
-						Ok(success().into())
+						success().into()
 					} else { // todo more details
 						warning(WarningCode::AttributeListWarning).offending(missed_el).into()
 					}

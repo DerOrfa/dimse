@@ -24,10 +24,11 @@ use dicom_ul::{FullAeAddr};
 use snafu::ResultExt;
 use tokio::net::TcpListener;
 use tokio::sync::watch::Sender;
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 use crate::error::Result;
 use crate::dispatcher::Dispatcher;
 use crate::io::FileAccess;
+use crate::payload::Attachment;
 
 pub trait Taker
 {
@@ -119,6 +120,19 @@ pub fn lazy_dump_to_string<D>(obj:&InMemDicomObject<D>) -> Option<String> where 
 				.ok()
 		},
 		Err(_) => None
+	}
+}
+pub fn lazy_attachment_to_string(att:&Attachment) -> Option<String>
+{
+	match att {
+		Attachment::File { path, .. } => {
+			Some(format!("with attached file {}",path.display()))
+		}
+		Attachment::SmallObj(s) => {
+			lazy_dump_to_string(&s).map(|s|format!("with attached small object\n{s}"))
+		}
+		Attachment::Obj(o) => {Some("with attached object".to_string())}
+		Attachment::None => None
 	}
 }
 // Specs
