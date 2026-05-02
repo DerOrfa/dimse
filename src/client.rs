@@ -8,22 +8,12 @@ use dicom::object::InMemDicomObject;
 use dicom_ul::association::{Association};
 use dicom_ul::pdu::{PresentationContextNegotiated};
 use snafu::{prelude::*};
-use strum_macros::AsRefStr;
 use tracing::debug;
 use crate::association::{ReceivePdu, SendPdu, Sink};
 use crate::definitions::{QUERY_RETRIEVE_SYNTAXES, STORAGE_SYNTAXES};
 use crate::error::{DimseError, Result};
 
 pub struct Client(ClientAssociation<std::net::TcpStream>);
-
-#[derive(AsRefStr, Clone, Debug)]
-pub enum RetrieveLevel
-{
-	PATIENT,
-	STUDY,
-	SERIES,
-	IMAGE
-}
 
 impl Client {
 	pub fn new<S>(addr: AeAddr<SocketAddr>, calling_ae:Option<S>, abstract_syntaxes:impl IntoIterator<Item=&'static str>)

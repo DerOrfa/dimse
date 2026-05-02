@@ -4,10 +4,11 @@ use dicom::core::{PrimitiveValue, VR};
 use dicom::core::header::Header;
 use dicom::object::mem::InMemElement;
 use dicom_dictionary_std::{tags, uids};
-use dimse::client::{Client, RetrieveLevel};
+use dimse::client::Client;
 use dimse::error::Result;
 use futures::TryStreamExt;
 use tracing::error;
+use dimse::RetrieveLevel;
 use crate::common::dcm::{diff, tagname};
 
 mod common;

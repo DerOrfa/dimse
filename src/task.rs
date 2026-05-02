@@ -10,7 +10,6 @@ use dicom_ul::{FullAeAddr};
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, RwLock};
-use dicom::core::header::{HasLength, Header};
 use dicom::object::InMemDicomObject;
 use dicom_ul::association::Error::ConnectionClosed;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -21,6 +20,7 @@ use crate::io::FileAccess;
 use crate::status::*;
 use futures::{Stream, TryStreamExt};
 use tokio::pin;
+use crate::identifier::Identifier;
 
 pub struct Task<B> where B:FileAccess
 {
@@ -88,7 +88,7 @@ impl<B> Task<B> where B:FileAccess
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/chapter_C.html
 			RequestCode::C_GET => {
 				if let Some(o) = request.take_attachment_obj(){
-					let instances = self.backend.lookup(&o)?;
+					let instances = self.backend.lookup(o).await?;
 					let mut failed:HashSet<_> = Default::default();
 					let mut fail_comment = Option::<String>::None;
 					let mut pend = pending(instances.size_hint().1.map(|e|e as u16));
@@ -128,32 +128,23 @@ impl<B> Task<B> where B:FileAccess
 				} else { Err(failure(FailureCode::InvalidArgument)) }
 			}
 			RequestCode::C_FIND => {
-				if let Some(ident) = request.take_attachment_obj(){
-					let instances =  self.backend.find(&ident)?;
+				if let Some(ident) = request.take_attachment_obj().map(Identifier::from){
+					let instances =  self.backend.find(ident.clone()).await?;
 					let mut pend = pending(instances.size_hint().1.map(|l|l as u16));
 					let mut missed_el = HashSet::new();
 
 					pin!(instances);
 					while let Some(mut ob) = instances.try_next().await?
 					{
-						let mut ret = InMemDicomObject::new_empty();
-						let mut do_warn=false;
-						for e in ident.iter() // got though all key attributes in the identifier
-							.filter(|e|e.tag()!=tags::QUERY_RETRIEVE_LEVEL)
-							.filter(|e|e.tag()!=tags::QUERY_RETRIEVE_VIEW)
-							.filter(|e|e.tag()!=tags::SPECIFIC_CHARACTER_SET)
-							.filter(|e|e.tag()!=tags::TIMEZONE_OFFSET_FROM_UTC)
+						let ret = match ident.extract(&mut ob)
 						{
-							// if they're in the found looked up entry, move them into the result
-							let tag = e.tag();
-							if let Some(found) = ob.take(tag) && !found.is_empty(){
-								ret.put(found);
-							} else {
-								missed_el.insert(tag);
-								do_warn = true;
+							(extracted,missing) => {
+								if missing.is_empty(){pend.succeed();}
+								else {pend.warn();}
+								missed_el.extend(missing);
+								InMemDicomObject::from_element_iter(extracted)
 							}
-						}
-						if do_warn{pend.warn();}else{ pend.succeed(); }
+						};
 						let resp = request
 							.make_response(pend.clone())
 							.with_identifier(ret);

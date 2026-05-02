@@ -1,21 +1,24 @@
 use std::backtrace::Backtrace;
 use std::fs::File;
 use super::error::DimseError::TransferSyntaxNotFound;
-use super::error::{DimseError, Result};
 use dicom::encoding::TransferSyntaxIndex;
-use dicom::object::{FileDicomObject, FileMetaTable, FileMetaTableBuilder, InMemDicomObject, ReadError};
+use dicom::object::{FileDicomObject, FileMetaTable, FileMetaTableBuilder, InMemDicomObject, OpenFileOptions, ReadError};
 use dicom::transfer_syntax::TransferSyntaxRegistry;
 use dicom_ul::pdu::{PDataValue, PDataValueType};
 use snafu::{GenerateImplicitData, ResultExt};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use dicom_dictionary_std::tags;
-use futures::Stream;
+use futures::{stream, Stream, StreamExt};
+use futures::stream::BoxStream;
 use tokio::sync::mpsc::Receiver;
+use tokio::task::spawn_blocking;
 use tracing::error;
 use crate::definitions::FailureCode;
+use crate::error::DimseError;
 use crate::status::{failure, Comment, Status, StatusFailure};
 use crate::Taker;
+use crate::identifier::Identifier;
 
 pub struct PipeDataReader<'a>{
 	source: &'a mut Receiver<PDataValue>,
@@ -47,28 +50,28 @@ impl<'a> Read for PipeDataReader<'a> {
 	}
 }
 
-pub type ItemResult<I> = std::result::Result<I,StatusFailure>;
+pub type ItemResult<I> = Result<I,StatusFailure>;
 
 pub trait FileAccess: Clone + Send + Sync
 {
 	type Item:Send + Sync;
-	fn get_path(&self, uid:&Self::Item) -> impl Future<Output = std::result::Result<PathBuf, StatusFailure>> + Send;
+	fn get_path(&self, uid:&Self::Item) -> impl Future<Output = Result<PathBuf, StatusFailure>> + Send;
 	fn store_file(&mut self, file:FileDicomObject<InMemDicomObject>) -> impl Future<Output = Status> + Send;
-	fn lookup<'a>(&self, ident: &InMemDicomObject) 
-		-> std::result::Result<impl Stream<Item=ItemResult<Self::Item>> + Send + 'a, StatusFailure>;
-	fn find<'a>(&self, ident: &InMemDicomObject) 
-		-> std::result::Result<impl Stream<Item=ItemResult<InMemDicomObject>> + Send + 'a, StatusFailure>;
+	fn lookup<'a>(&self, ident: impl Into<Identifier> + Send)
+		-> impl Future<Output = Result<BoxStream<'a,ItemResult<Self::Item>>, StatusFailure>> + Send;
+	fn find<'a>(&self, ident: impl Into<Identifier> + Send)
+		-> impl Future<Output = Result<BoxStream<'a,ItemResult<InMemDicomObject>>, StatusFailure>> + Send;
 }
 
 pub async fn read_pipe(source: &mut Option<Receiver<PDataValue>>, prelude: Vec<u8>, ts:String)
-                       -> Result<InMemDicomObject>
+                       -> crate::error::Result<InMemDicomObject>
 {
 	let ts = TransferSyntaxRegistry.get(ts.as_str()).ok_or(TransferSyntaxNotFound{ts})?;
 	let prelude = Cursor::new(prelude);
 
 	// take the receiver and move it into a sync block
 	let mut s =  source.take().expect("There must be a receiver");
-	let (r,s) = tokio::task::spawn_blocking(move || {
+	let (r,s) = spawn_blocking(move || {
 		// chain the prelude and the pipe-reader and read that as dicom object
 		let buffer = prelude.chain(PipeDataReader::new(&mut s));
 		InMemDicomObject::read_dataset_with_ts(buffer, &ts).map(|e|(e,s))
@@ -80,7 +83,7 @@ pub async fn read_pipe(source: &mut Option<Receiver<PDataValue>>, prelude: Vec<u
 	Ok(r)
 }
 
-pub fn make_file(obj: InMemDicomObject, ts:&str) -> std::result::Result<FileDicomObject<InMemDicomObject>,StatusFailure>
+pub fn make_file(obj: InMemDicomObject, ts:&str) -> Result<FileDicomObject<InMemDicomObject>,StatusFailure>
 {
 	let file_meta = FileMetaTableBuilder::new().transfer_syntax(ts);
 	let uid = Taker::get(&obj,tags::SOP_INSTANCE_UID).ok().unwrap_or("file".to_string());
@@ -96,7 +99,7 @@ pub fn make_file(obj: InMemDicomObject, ts:&str) -> std::result::Result<FileDico
 	}
 }
 
-pub fn get_filemeta(path:impl AsRef<Path>) -> std::result::Result<(FileMetaTable,u64), ReadError>
+pub fn get_filemeta(path:impl AsRef<Path>) -> Result<(FileMetaTable,u64), ReadError>
 {
 	let path = path.as_ref();
 	let mut file =	File::open(path).map_err(|e|ReadError::OpenFile {
@@ -117,4 +120,19 @@ pub fn get_filemeta(path:impl AsRef<Path>) -> std::result::Result<(FileMetaTable
 		backtrace: Backtrace::generate_with_source(&e),
 		source: e
 	})
+}
+
+pub fn stream_files<T>(files:T) -> impl Stream<Item=ItemResult<InMemDicomObject>> + Send
+	where T:IntoIterator<Item=PathBuf> + Send, <T as IntoIterator>::IntoIter:Send
+{
+	stream::iter(files).then(move|p|{
+		async {
+			spawn_blocking(
+				move || OpenFileOptions::new().read_until(tags::PIXEL_DATA).open_file(p)
+					.map_err(|e| failure(FailureCode::Failure).comment(e))
+					.map(|o|o.into_inner())
+			).await.unwrap()
+		}
+	})
+
 }

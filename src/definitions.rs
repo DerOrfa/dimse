@@ -1,6 +1,6 @@
 use dicom::dictionary_std::uids::*;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
-use strum_macros::{AsRefStr, Display};
+use strum::{AsRefStr, Display};
 use thiserror::Error;
 
 /// A list of supported abstract syntaxes for storage services

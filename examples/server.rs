@@ -1,4 +1,4 @@
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt, TryStreamExt};
 use clap::builder::PossibleValue;
 use clap::{Parser, ValueEnum};
 use dicom::object::{FileDicomObject, InMemDicomObject, OpenFileOptions};
@@ -8,22 +8,27 @@ use dimse::definitions::FailureCode;
 use dimse::error::DimseError;
 use dimse::io::{FileAccess, ItemResult};
 use dimse::status::{failure, Comment, Offending, Status, StatusFailure};
-use dimse::Taker;
+use dimse::{io, RetrieveLevel, Taker};
 use glob::glob;
 use indicatif::{ProgressBar, ProgressStyle};
 use snafu::prelude::*;
 use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use futures::{stream, Stream};
+use futures::future::poll_fn;
+use futures::stream::BoxStream;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio::task::{spawn_blocking, JoinSet};
 use tokio::{signal, spawn};
 use tracing::{info, Level};
+use dimse::definitions::FailureCode::MissingAttribute;
+use dimse::identifier::Identifier;
 
 #[derive(Clone)]
 struct LogLevel(Level);
@@ -122,6 +127,26 @@ impl Accessor {
 			studies: Arc::new(RwLock::new(studies)),
 		})
 	}
+	pub fn stream_files<'a>(&self,direct_select:Option<String>) -> impl Stream<Item=ItemResult<(String,InMemDicomObject)>> + Send +'a
+	{
+		let reader = self.files.clone().read_owned();
+		async move {
+			let i = reader.await;
+			let instances:Vec<_> = match direct_select
+			{
+				Some(instance) => i.get_key_value(&instance)
+					.map_or(vec![], |(uid,v)|vec![(uid.clone(),v.clone())]),
+				_ => i.clone().into_iter().collect(),
+			};
+			stream::iter(instances)
+		}.into_stream().flatten()
+		.then( async move|(uid,p)|{
+			spawn_blocking(
+				move || OpenFileOptions::new().read_until(tags::PIXEL_DATA).open_file(p.clone())
+					.map_err(|e| failure(FailureCode::Failure).comment(e))
+			).await.unwrap().map(|o|(uid,o.into_inner()))
+		})
+	}
 }
 
 impl FileAccess for Accessor
@@ -136,50 +161,75 @@ impl FileAccess for Accessor
 		todo!()
 	}
 
-	fn lookup<'a>(&self, ident: &InMemDicomObject) -> Result<impl Stream<Item=ItemResult<Self::Item>> + Send + 'a, StatusFailure> {
-		let sel_instance = Taker::get_opt(&ident,tags::SOP_INSTANCE_UID)?;
-		let sel_series = Taker::get_opt(&ident,tags::SERIES_INSTANCE_UID)?;
-		let sel_study = Taker::get_opt(&ident,tags::STUDY_INSTANCE_UID)?;
-		let series = self.series.clone();
-		let studies = self.studies.clone();
-		let stream = stream::once(async move {
-			if let Some(instance) = sel_instance
-			{
-				stream::iter(vec![Ok(instance)])
-			} else if let Some(sel_series) = sel_series	{
-				let series:Vec<_> = series.read().await.get::<String>(&sel_series).unwrap().clone()
-					.into_iter().map(Ok::<_,StatusFailure>).collect();
-				stream::iter(series)
-			} else if let Some(sel_study) = sel_study {
-				let studies:Vec<_> = studies.read().await.get::<String>(&sel_study).unwrap().clone()
-					.into_iter().map(Ok::<_,StatusFailure>).collect();
-				stream::iter(studies)
+	async fn lookup<'a>(&self, ident: impl Into<Identifier> + Send) -> Result<BoxStream<'a,ItemResult<Self::Item>>, StatusFailure> {
+		let ident = ident.into();
+		match ident.level {
+			Some(RetrieveLevel::IMAGE) => {
+				if let Some(sel_instance) = ident.contains(tags::SOP_INSTANCE_UID).and_then(|e|e.to_str().ok()){
+					Ok(stream::iter(vec![Ok(sel_instance.to_string())]).boxed())
+				} else {Err(failure(FailureCode::InvalidAttributeValue).offending([tags::SOP_INSTANCE_UID]))}
 			}
-			else { panic!("invalid ident") }
-		});
-		Ok(stream.flatten())
+			Some(RetrieveLevel::SERIES) => {
+				if let Some(sel_series) = ident.contains(tags::SERIES_INSTANCE_UID).and_then(|e|e.to_str().ok()){
+					let series = self.series.read().await;
+					let series:Vec<_> = series.get(&sel_series.to_string()).into_iter().flatten().map(|s| Ok(s.clone())).collect();
+					Ok(stream::iter(series).boxed())
+				} else {Err(failure(FailureCode::InvalidAttributeValue).offending([tags::SERIES_INSTANCE_UID]))}
+			}
+			Some(RetrieveLevel::STUDY) => {
+				if let Some(sel_study) = ident.contains(tags::STUDY_INSTANCE_UID).and_then(|e|e.to_str().ok()){
+					let study = self.series.read().await;
+					let study:Vec<_> = study.get(&sel_study.to_string()).into_iter().flatten().map(|s| Ok(s.clone())).collect();
+					Ok(stream::iter(study).boxed())
+				} else {Err(failure(FailureCode::InvalidAttributeValue).offending([tags::STUDY_INSTANCE_UID]))}
+			}
+			_ => Err(failure(FailureCode::CannotUnderstand).offending([tags::QUERY_RETRIEVE_LEVEL]))
+		}
 	}
 
-	fn find<'a>(&self, ident: &InMemDicomObject) -> Result<impl Stream<Item=ItemResult<InMemDicomObject>> + Send + 'a, StatusFailure>{
-		let name_glob = Taker::get_opt(&ident,tags::PATIENT_NAME)?.ok_or(failure(FailureCode::NoSuchAttribute).offending([tags::PATIENT_NAME]))?;
-		let instances = self.files.clone();
-		let instances_stream = stream::once(async move {
-			let v:Vec<_> = instances.read().await.clone().into_iter().map(|(_,p)|(p, String::clone(&name_glob)))
-				.collect();
-			stream::iter(v)
-		})
-			.flatten()
-			.filter_map( async move|(p,name_glob)|{
-				let obj = spawn_blocking(
-					move || OpenFileOptions::new().read_until(tags::PIXEL_DATA).open_file(p.clone())
-						.map_err(|e| failure(FailureCode::Failure).comment(e))
-				).await.unwrap();
-				obj.map(|o|{
-					let name: String = Taker::get(&o, tags::PATIENT_NAME).unwrap();
-					glob_match::glob_match(name_glob.as_str(), &name).then_some(o.into_inner())
-				}).transpose()
-			});
-		Ok(instances_stream)
+	async fn find<'a>(&self, ident: impl Into<Identifier> + Send) -> Result<BoxStream<'a,ItemResult<InMemDicomObject>>, StatusFailure>
+	{
+		let ident = ident.into();
+		match ident.level{
+			Some(RetrieveLevel::IMAGE) => {
+				let stream = self.stream_files(None).filter_map(move|r|{
+					let ident = ident.clone();
+					async move {
+						r.map(|(_,o)|ident.matches_all(&o).then_some(o)).transpose()
+					}
+				});
+				Ok(stream.boxed())
+			}
+			Some(RetrieveLevel::SERIES) => {
+				let files = self.files.read().await;
+				let series = self.series.read().await;
+
+				let first_in_series:Vec<_> =  series.iter()
+					.filter_map(|(_,v)|v.first())
+					.map(|s|files.get(s).cloned().unwrap()).collect();
+				let stream = io::stream_files(first_in_series).filter_map(move|r|{
+					let ident = ident.clone();
+					async move {
+						r.map(|o|ident.matches_all(&o).then_some(o)).transpose()
+					}
+				});
+				Ok(stream.boxed())
+			}
+			Some(RetrieveLevel::STUDY) => {
+				let files = self.files.read().await;
+				let first_in_studies:Vec<_> =  self.studies.read().await.iter()
+					.filter_map(|(_,v)|v.first())
+					.map(|s|files.get(s).cloned().unwrap()).collect();
+				let stream = io::stream_files(first_in_studies).filter_map(move|r|{
+					let ident = ident.clone();
+					async move {
+						r.map(|o|ident.matches_all(&o).then_some(o)).transpose()
+					}
+				});
+				Ok(stream.boxed())
+			}
+			_ => Err(failure(MissingAttribute).offending([tags::QUERY_RETRIEVE_LEVEL]))
+		}
 	}
 }
 

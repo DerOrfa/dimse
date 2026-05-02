@@ -7,7 +7,7 @@ use std::process::exit;
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::{info, error, Level};
-use dimse::client::{Client, RetrieveLevel};
+use dimse::client::Client;
 use clap::builder::{PossibleValue};
 use clap::{Parser, Subcommand, ValueEnum};
 use dicom::core::{PrimitiveValue, VR};
@@ -22,7 +22,7 @@ use futures::{StreamExt, TryStreamExt};
 use glob::glob;
 use dimse::error::DimseError;
 use snafu::prelude::*;
-use dimse::Taker;
+use dimse::{RetrieveLevel, Taker};
 use indicatif::{ProgressBar, ProgressStyle};
 use dimse::association::{Association, SendPayload};
 use dimse::definitions::RequestCode::C_GET;
@@ -131,7 +131,7 @@ async fn main() -> dimse::error::Result<()>
 		Commands::FindStudy { name } => {
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
 			sp.set_message(format!(r#"Looking up "{}""#, name));
-			let found:Vec<_> =client.find(dimse::client::RetrieveLevel::STUDY, [
+			let found:Vec<_> =client.find(RetrieveLevel::STUDY, [
 				InMemElement::new(tags::PATIENT_NAME, VR::PN, name),
 				InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
 				InMemElement::new(tags::STUDY_DATE, VR::DA, PrimitiveValue::Empty),
@@ -177,7 +177,7 @@ async fn main() -> dimse::error::Result<()>
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
 			sp.set_message(format!(r#"Looking up "{}""#, uid));
 			let mut instances = vec![];
-			let mut found =client.find(dimse::client::RetrieveLevel::IMAGE,[
+			let mut found =client.find(RetrieveLevel::IMAGE,[
 				InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, uid),
 				InMemElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::Empty),
 				InMemElement::new(tags::SOP_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),

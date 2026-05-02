@@ -7,9 +7,9 @@ use dicom_dictionary_std::{tags, uids};
 use futures::TryStreamExt;
 use tracing::error;
 use dimse::association::SendPayload;
-use dimse::client::{Client, RetrieveLevel};
+use dimse::client::Client;
 use dimse::definitions::RequestCode::C_GET;
-use dimse::Taker;
+use dimse::{RetrieveLevel, Taker};
 use dimse::error::Result;
 use crate::common::dcm::{diff, tagname};
 use dimse::pending_receive::PendingStore;
@@ -20,7 +20,6 @@ mod common;
 async fn test_get() -> Result<()>
 {
 	// tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
-
 	let obj = dcm::synthesize_dicom_obj(&dcm::UidSynthesizer::default(),1,1,1);
 	let uid:String = Taker::get(&obj,tags::SOP_INSTANCE_UID)?;
 	let access = common::MultiFileAccess::new([obj.clone()]).await?;
@@ -94,7 +93,6 @@ async fn test_get_many() -> Result<()>
 		}
 
 	}
-
 	drop(watcher);
 	Ok(())
 }

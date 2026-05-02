@@ -26,7 +26,7 @@ use futures::StreamExt;
 use futures::stream::FusedStream;
 use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, trace, warn};
-use crate::client::RetrieveLevel;
+use crate::RetrieveLevel;
 use crate::definitions::RequestCode::{C_FIND, C_GET, C_MOVE, C_STORE};
 use crate::{io, lazy_dump_to_string, msg, Taker};
 use crate::context::Context;

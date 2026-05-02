@@ -11,24 +11,40 @@ pub(crate) mod dispatcher;
 mod server;
 pub mod pending_receive;
 pub mod status;
+pub mod identifier;
 
 use std::io::{Cursor, Read};
+use std::path::PathBuf;
 use dicom::core::{DataDictionary, PrimitiveValue, Tag};
 use dicom::core::header::Header;
 use dicom::core::value::{ConvertValueError, DicomValueType, Value};
 use dicom::dump::DumpOptions;
-use dicom::object::{InMemDicomObject};
+use dicom::object::{InMemDicomObject, OpenFileOptions};
 use dicom::object::mem::InMemElement;
-use dicom_dictionary_std::StandardDataDictionary;
+use dicom_dictionary_std::{tags, StandardDataDictionary};
 use dicom_ul::{FullAeAddr};
+use futures::{stream, Stream, StreamExt};
 use snafu::ResultExt;
 use tokio::net::TcpListener;
 use tokio::sync::watch::Sender;
 use tracing::{debug, error, trace};
 use crate::error::Result;
 use crate::dispatcher::Dispatcher;
-use crate::io::FileAccess;
+use crate::io::{FileAccess};
 use crate::payload::Attachment;
+use strum::{AsRefStr, EnumString};
+use tokio::task::spawn_blocking;
+use crate::definitions::FailureCode;
+use crate::status::{failure, Comment};
+
+#[derive(AsRefStr, EnumString, Clone, Debug)]
+pub enum RetrieveLevel
+{
+	PATIENT,
+	STUDY,
+	SERIES,
+	IMAGE
+}
 
 pub trait Taker
 {
@@ -131,7 +147,7 @@ pub fn lazy_attachment_to_string(att:&Attachment) -> Option<String>
 		Attachment::SmallObj(s) => {
 			lazy_dump_to_string(&s).map(|s|format!("with attached small object\n{s}"))
 		}
-		Attachment::Obj(o) => {Some("with attached object".to_string())}
+		Attachment::Obj(_) => {Some("with attached object".to_string())}
 		Attachment::None => None
 	}
 }
@@ -167,4 +183,14 @@ pub async fn serve<A>(listener:impl Into<FullAeAddr<TcpListener>>, watcher: Send
 		});
 	}
 	Ok(())
+}
+
+pub fn stream_files(source:impl IntoIterator<Item=PathBuf>) -> impl Stream<Item=Result<InMemDicomObject>>
+{
+	stream::iter(source).then( async move|p|{
+		spawn_blocking(
+			move || OpenFileOptions::new().read_until(tags::PIXEL_DATA).open_file(p.clone())
+				.map_err(|e|e.into())
+		).await.unwrap().map(|o|o.into_inner())
+	})
 }

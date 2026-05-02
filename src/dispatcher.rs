@@ -12,7 +12,7 @@ use crate::error::DimseError::UnexpectedResponse;
 use crate::io::FileAccess;
 use crate::lazy_attachment_to_string;
 use crate::msg::{Message, MessageType};
-use crate::payload::{Attachment, Payload};
+use crate::payload::Payload;
 use crate::server::Server;
 use crate::task::{Task, TaskHandle};
 use super::error::{DimseError, Result};
