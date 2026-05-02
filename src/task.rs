@@ -10,7 +10,6 @@ use dicom_ul::{FullAeAddr};
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, RwLock};
-use dicom::object::InMemDicomObject;
 use dicom_ul::association::Error::ConnectionClosed;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinSet;
@@ -131,31 +130,18 @@ impl<B> Task<B> where B:FileAccess
 				if let Some(ident) = request.take_attachment_obj().map(Identifier::from){
 					let instances =  self.backend.find(ident.clone()).await?;
 					let mut pend = pending(instances.size_hint().1.map(|l|l as u16));
-					let mut missed_el = HashSet::new();
 
 					pin!(instances);
 					while let Some(mut ob) = instances.try_next().await?
 					{
-						let ret = match ident.extract(&mut ob)
-						{
-							(extracted,missing) => {
-								if missing.is_empty(){pend.succeed();}
-								else {pend.warn();}
-								missed_el.extend(missing);
-								InMemDicomObject::from_element_iter(extracted)
-							}
-						};
+						pend.succeed();
+						// @todo spec says we should things we don't have as empty elements
 						let resp = request
 							.make_response(pend.clone())
-							.with_identifier(ret);
+							.with_identifier(ident.extract(&mut ob).0);
 						self.assoc.send_payload(resp.try_into()?).await?;
 					}
-					if missed_el.is_empty()
-					{
-						success().into()
-					} else { // todo more details
-						warning(WarningCode::AttributeListWarning).offending(missed_el).into()
-					}
+					success().into()
 				} else { Err(failure(FailureCode::InvalidArgument)) }
 			}
 			RequestCode::C_MOVE => {todo!()}

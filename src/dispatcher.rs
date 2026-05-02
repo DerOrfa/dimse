@@ -140,7 +140,7 @@ impl<B> Dispatcher<B> where B:FileAccess
 						MessageType::Request(mut req) => {
 							req.read_attachment(&mut self.ass).await?;
 							debug!("Starting task to handle {req}");
-							lazy_attachment_to_string(req.attachment()).map(|s|debug!("{s}"));
+							lazy_attachment_to_string(req.attachment()).map(|s|trace!("{s}"));
 							let req_id = req.id;
 							let task = Task::spawn(
 								self.ass.peer.clone(), self.ass.local.clone(),

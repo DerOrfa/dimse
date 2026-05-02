@@ -17,7 +17,7 @@ use dicom_dictionary_std::tags;
 use dicom_dictionary_std::uids::{ENHANCED_MR_IMAGE_STORAGE, MR_IMAGE_STORAGE};
 use dicom_ul::pdu::{PDataValue, PDataValueType, PresentationContextNegotiated};
 use snafu::ResultExt;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 use crate::context::Context;
 use crate::definitions::RequestCode;
 use crate::error::DimseError::{IncompleteMsg, InvalidStatus, UnexpectedEmptyMsg};
@@ -339,8 +339,8 @@ impl Message
 		self.obj.put(DataElement::new(tags::COMMAND_DATA_SET_TYPE,VR::US,dicom_value!(U16,att_code)));
 		debug!("Preparing {title} {self}");
 		let obj = InMemDicomObject::command_from_element_iter(self.obj.into_iter());
-		lazy_dump_to_string(&obj).map(|s|debug!("{s}"));
-		lazy_attachment_to_string(&self.attachment).map(|s|debug!("{s}"));
+		lazy_dump_to_string(&obj).map(|s|trace!("{s}"));
+		lazy_attachment_to_string(&self.attachment).map(|s|trace!("{s}"));
 		obj.write_dataset_with_ts(&mut data, &IMPLICIT_VR_LITTLE_ENDIAN.erased())
 			.with_whatever_context::<_,_,DimseError>(|e|
 				format!("Preparation of message for sending failed ({e})"))?;
