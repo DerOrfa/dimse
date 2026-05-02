@@ -326,9 +326,15 @@ impl Message
 			_ => 0x0000,
 		};
 		let title = match Taker::get_opt(&self.obj, tags::COMMAND_FIELD)? as Option<u16> {
-			Some(e) if (e & 0x8000) == 0 => "request",
-			Some(_) => "response to",
-			None => "message",
+			Some(e) if (e & 0x8000) == 0 => "request".to_string(),
+			Some(_) => {
+				match Taker::get(&self.obj,tags::STATUS).map(|c|Status::try_from_code(c).unwrap()){
+					Ok(Ok(s)) => format!("response {s} to"),
+					Ok(Err(s)) => format!("response {s} to"),
+					_ => "response to".to_string(),
+				}
+			}
+			None => "message".to_string(),
 		};
 		self.obj.put(DataElement::new(tags::COMMAND_DATA_SET_TYPE,VR::US,dicom_value!(U16,att_code)));
 		debug!("Preparing {title} {self}");

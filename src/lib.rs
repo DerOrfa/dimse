@@ -34,8 +34,6 @@ use crate::io::{FileAccess};
 use crate::payload::Attachment;
 use strum::{AsRefStr, EnumString};
 use tokio::task::spawn_blocking;
-use crate::definitions::FailureCode;
-use crate::status::{failure, Comment};
 
 #[derive(AsRefStr, EnumString, Clone, Debug)]
 pub enum RetrieveLevel

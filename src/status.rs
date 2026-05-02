@@ -107,16 +107,14 @@ impl Code for StatusPending{
 impl Code for StatusWarning {
 	fn code(&self) -> u16 { u16::from(self.code.to_owned()) }
 	fn try_from_code(code: u16) -> Option<Self> {
-		if let 0x0001..=0x00FF = code {
-			if let Ok(code) = WarningCode::try_from(code){
-				Some(StatusWarning{code, ..Default::default()})
-			} else if let 0xB000 ..= 0xBFFF = code {
-				Some(StatusWarning{code:WarningCode::DataCoercion, offset:code-0xB000,..Default::default()})
-			} else {
-				warn!("unknown warning code: 0x{code:04X}");
-				Some(StatusWarning{code:WarningCode::DataCoercion,..Default::default()})
-			}
-		} else { None }
+		if let Ok(code) = WarningCode::try_from(code){
+			Some(StatusWarning{code, ..Default::default()})
+		} else if let 0xB000 ..= 0xBFFF = code {
+			Some(StatusWarning{code:WarningCode::DataCoercion, offset:code-0xB000,..Default::default()})
+		} else {
+			warn!("unknown warning code: 0x{code:04X}");
+			Some(StatusWarning{code:WarningCode::DataCoercion,..Default::default()})
+		}
 	}
 	fn offset(mut self, offset:u16) -> Self {self.offset=offset;self}
 	fn get_offset(&self) -> u16 {self.offset}
@@ -135,9 +133,8 @@ impl Code for StatusOk {
 	{
 		match code {
 			0x0000 => Some(StatusOk::Success(StatusSuccess::default())),
-			0x0001 ..= 0x00ff => StatusWarning::try_from_code(code).map(|w| StatusOk::Warning(w)),
 			0xFF00 ..= 0xFFff => StatusPending::try_from_code(code).map(|p| StatusOk::Pending(p)),
-			_ => None
+			_ => StatusWarning::try_from_code(code).map(|w| StatusOk::Warning(w)),
 		}
 	}
 
@@ -189,9 +186,12 @@ impl Code for Result<StatusOk,StatusFailure> {
 	}
 	fn try_from_code(code:u16) -> Option<Self> {
 		match code {
-			0x0000 | 0x0001 ..= 0x00ff | 0xFF00..=0xFFff => Ok(StatusOk::try_from_code(code)).transpose(),
+			0x0000 | 0x0107 | 0x0116 | 0x0001 ..= 0x00ff | 0xFF00..=0xFFff => Ok(StatusOk::try_from_code(code)).transpose(),
 			0x0100 ..=0xfe00 => StatusFailure::try_from_code(code).map(|f| Err(f)),
-			_ => None
+			_ => {
+				warn!("unknown error code: 0x{code:04X}");
+				None
+			}
 		}
 	}
 	fn offset(self, offset:u16) -> Self {
@@ -313,7 +313,7 @@ impl Display for StatusPending {
 impl Display for StatusWarning
 {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		let code = self.code();
+		let code = &self.code;
 		let offset_str = if self.get_offset() > 0 {format!("+{}", self.get_offset())} else {"".to_string()};
 		self.get_comment().map(
 			|c|f.write_fmt(format_args!(r#"Warning "{}{}", comment: "{c}""#,code,offset_str))
