@@ -27,9 +27,9 @@ use futures::StreamExt;
 use futures::stream::FusedStream;
 use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, trace, warn};
-use crate::RetrieveLevel;
+use crate::{lazy_attachment_to_string, RetrieveLevel};
 use crate::definitions::RequestCode::{C_FIND, C_GET, C_MOVE, C_STORE};
-use crate::{io, lazy_dump_to_string, msg, Taker};
+use crate::{io, msg, Taker};
 use crate::context::Context;
 use crate::status::{StatusOk, StatusPending, StatusSuccess};
 
@@ -317,32 +317,12 @@ impl<A> ReceiveMessage for Association<A> where A:ReceivePdu {
 	async fn receive_message(&mut self) -> Result<MessageType> {
 		msg::Message::read_from(self).await
 			.map(|m|{
+				debug!("{} received {} from {}",self.local,	m, self.peer_address());
 				let att = match &m {
-					MessageType::Request(r) => {
-						debug!("{} received {} from {}:\n{}",
-							self.local,
-							r,
-							self.peer,
-							lazy_dump_to_string(&r.obj).unwrap_or("".to_string())
-						);
-						r.attachment()
-					}
-					MessageType::Response(r) => {
-						debug!("{} received {} from {}:\n{}",
-							self.local,
-							r,
-							self.peer_address(),
-							lazy_dump_to_string(&r.obj).unwrap_or("".to_string())
-						);
-						r.attachment()
-					}
+					MessageType::Request(r) => r.attachment(),
+					MessageType::Response(r) => r.attachment(),
 				};
-				match att {
-					Attachment::SmallObj(o) =>
-						trace!("With attachment\n{}", lazy_dump_to_string(o).unwrap_or("".to_string())),
-					Attachment::Obj(_) => trace!("With attached object"),
-					_ => {}
-				}
+				lazy_attachment_to_string(att).map(|s|trace!(s));
 				m
 			}).with_whatever_context(|e|format!("Failed getting message from {} ({e})", self.peer_address()))
 	}

@@ -103,11 +103,11 @@ impl<'a,A> PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin
 				self.warn = warn;
 				self.failed = fail;
 				self.to_do = to_do;
-				response.take_attachment_obj()
+				response.take_attachment_obj().or_else(||Some(InMemDicomObject::new_empty()))
 			},
 			Ok(StatusOk::Warning(w)) => {
 				warn!("Got status {w}");
-				response.take_attachment_obj()
+				response.take_attachment_obj().or_else(||Some(InMemDicomObject::new_empty()))
 			}
 			Err(e) => {
 				self.terminated = true;
