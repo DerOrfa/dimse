@@ -29,7 +29,7 @@ async fn test_find() -> Result<()>
 
 	let access = common::MultiFileAccess::new(series_a.iter().map(Clone::clone).chain(series_b.into_iter())).await?;
 
-	let (addr, watcher,_) = common::init_server(access.clone()).await?;
+	let (addr, watcher,_) = common::init_server("TEST_SCP",[] , access.clone()).await?;
 
 	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND])?;
 

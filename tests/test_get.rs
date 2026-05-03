@@ -24,7 +24,7 @@ async fn test_get() -> Result<()>
 	let uid:String = Taker::get(&obj,tags::SOP_INSTANCE_UID)?;
 	let access = common::MultiFileAccess::new([obj.clone()]).await?;
 
-	let (addr, watcher,_) = common::init_server(access.clone()).await?;
+	let (addr, watcher,_) = common::init_server("TEST_SCP",[] , access.clone()).await?;
 
 	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::ENHANCED_MR_IMAGE_STORAGE])?;
 
@@ -62,7 +62,7 @@ async fn test_get_many() -> Result<()>
 		.into_iter().map(|o|Taker::get(&o,tags::SOP_INSTANCE_UID).map(|s|(s,o)))
 		.collect::<Result<HashMap<String,_>>>()?;
 
-	let (addr, watcher,_) = common::init_server(access.clone()).await?;
+	let (addr, watcher,_) = common::init_server("TEST_SCP",[] , access.clone()).await?;
 
 	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::ENHANCED_MR_IMAGE_STORAGE])?;
 

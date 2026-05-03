@@ -1,54 +1,52 @@
-use dicom::core::header::Header;
 use crate::common::dcm;
-use dicom_dictionary_std::tags;
-use dicom_dictionary_std::uids;
+use dicom::core::VR;
+use dicom::object::mem::InMemElement;
+use dicom_dictionary_std::{tags, uids};
+use dicom_ul::FullAeAddr;
+use dimse::association::SendPayload;
 use dimse::client::Client;
-use dimse::Taker;
+use dimse::definitions::RequestCode::C_MOVE;
 use dimse::error::Result;
-use tracing::error;
-use dimse::io::FileAccess;
-use crate::common::dcm::{diff, tagname};
+use dimse::pending_receive::PendingStore;
+use dimse::{RetrieveLevel, Taker};
+use futures::TryStreamExt;
+use std::collections::HashMap;
 
 mod common;
+
 #[tokio::test(flavor = "multi_thread")]
 #[snafu::report]
 async fn test_move() -> Result<()>
 {
-	//tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
+	tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
 
-	let obj = dcm::synthesize_dicom_obj(&dcm::UidSynthesizer::default(),1,1,1);
-	let uid:String = Taker::get(&obj,tags::SOP_INSTANCE_UID)?;
+	let series = dcm::synthesize_series(&dcm::UidSynthesizer::default(),1,1,10);
+	let series_uid:String = Taker::get(series.first().expect("Series must not be empty"), tags::SERIES_INSTANCE_UID)?;
 
-	let path = std::env::temp_dir().join(format!("test_{uid}.dcm"));
-	obj.write_all(std::fs::File::create(&path)?)?;
+	let filled = common::MultiFileAccess::new(series.clone()).await?;
+	let empty = common::MultiFileAccess::new([]).await?;
+	let series= series
+		.into_iter().map(|o|Taker::get(&o,tags::SOP_INSTANCE_UID).map(|s|(s,o)))
+		.collect::<Result<HashMap<String,_>>>()?;
 
-	let access = common::MultiFileAccess::new([]).await?;
+	let (empty_srv, watcher1,_) = common::init_server("EMPTY",[] , empty.clone()).await?;
+	let (filled_srv, watcher2,_) = common::init_server("FILLED",[FullAeAddr::new("EMPTY",empty_srv)] , filled.clone()).await?;
 
-	let (addr, watcher,_) = common::init_server(access.clone()).await?;
+	let mut client = Client::new(filled_srv.into(),Some("TESTSCU"), [uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE])?;
 
-	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::ENHANCED_MR_IMAGE_STORAGE])?;
-
-	client.store_file(&path,[]).await?;
-	let stored_path = access.get_path(&uid).await?;
-	let stored_file = dicom::object::open_file(&stored_path)?;
-
-	let d = diff(obj.into_inner(),stored_file.into_inner());
-	for d in d.iter() {
-		match d
-		{
-			(Some(e1),Some(e2)) =>
-				error!("Sent {} differs from the reply: {:?}//{:?}",tagname(e1.tag()),e1.value(),e2.value()),
-			(Some(e1),None) =>
-				error!("Sent {} is missing in the reply", tagname(e1.tag())),
-			_ =>
-				error!("Unexpected {:?}//{:?}",d.0,d.1),
-		}
-	}
-	assert!(d.is_empty());
-
-	drop(watcher);
+	let req= client.new_request(C_MOVE, uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE ,vec![
+		InMemElement::new(tags::MOVE_DESTINATION, VR::AE, "EMPTY")
+	])?
+		.with_identifier([
+			InMemElement::new(tags::QUERY_RETRIEVE_LEVEL,VR::CS,RetrieveLevel::SERIES.as_ref()),
+			InMemElement::new(tags::SERIES_INSTANCE_UID, VR::UI, series_uid),
+		]);
+	client.send_request(req).await?;
+	let response:Vec<_> = PendingStore::new(&mut client, C_MOVE).try_collect().await?;
+	dbg!(response);
+	drop(watcher1);
+	drop(watcher2);
 	Ok(())
 }
-
 
 

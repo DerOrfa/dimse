@@ -3,37 +3,41 @@ pub mod dcm;
 
 use dicom::object::{FileDicomObject, InMemDicomObject, OpenFileOptions};
 use dicom_dictionary_std::tags;
+use dicom_ul::FullAeAddr;
 use dimse;
+use dimse::definitions::FailureCode;
 use dimse::error::DimseError;
+use dimse::identifier::Identifier;
 use dimse::io::{FileAccess, ItemResult};
-use dimse::{stream_files, RetrieveLevel, Taker};
+use dimse::status::{failure, success, Comment, Offending, Status, StatusFailure};
+use dimse::{RetrieveLevel, Taker};
+use futures::{stream, StreamExt};
 use snafu::ResultExt;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
-use futures::{Stream, stream, StreamExt, FutureExt};
 use futures::stream::BoxStream;
+use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::spawn;
-use tokio::sync::RwLock;
 use tokio::sync::watch::Receiver;
+use tokio::sync::RwLock;
 use tokio::task::{spawn_blocking, JoinHandle};
-use tracing::error;
-use dimse::definitions::FailureCode;
-use dimse::identifier::Identifier;
-use dimse::status::{failure, success, Comment, Offending, Status, StatusFailure};
 
-pub async fn init_server<F: FileAccess + 'static>(accessor:F)
-                                                  -> Result<(SocketAddr,Receiver<()>,JoinHandle<Result<(),DimseError>>), DimseError>
+pub async fn init_server<F: FileAccess + 'static>(
+	name:impl ToString,
+	peers:impl IntoIterator<Item=FullAeAddr<SocketAddr>>,
+	accessor:F
+) -> Result<(SocketAddr,Receiver<()>,JoinHandle<Result<(),DimseError>>), DimseError>
 {
 	let dicom_listener = TcpListener::bind("localhost:0").await
 		.with_whatever_context::<_,_,DimseError>(|e|format!("Binding to localhost failed: {e}"))?;
 	let addr = dicom_listener.local_addr()?;
 	let (signal_tx, signal_rx) = tokio::sync::watch::channel(());
+	let peers:Vec<_>=peers.into_iter().collect();
 
-	let handle = spawn(dimse::serve(("TEST_SCP".to_string(),dicom_listener),[],signal_tx, accessor));
+	let handle = spawn(dimse::serve((name.to_string(),dicom_listener),peers,signal_tx, accessor));
 	Ok((addr, signal_rx, handle))
 }
 
@@ -43,7 +47,7 @@ pub struct NullAccess;
 impl FileAccess for NullAccess {
 	type Item = String;
 
-	async fn get_uid(&self, uid: &Self::Item) -> Result<String, StatusFailure> {unimplemented!()}
+	async fn get_uid(&self, _: &Self::Item) -> Result<String, StatusFailure> {unimplemented!()}
 
 	async fn get_path(&self, _: &Self::Item) -> Result<PathBuf, StatusFailure> {
 		unimplemented!()
@@ -62,34 +66,27 @@ impl FileAccess for NullAccess {
 	}
 }
 
-#[derive(Default,Clone)]
+#[derive(Clone)]
 pub struct MultiFileAccess{
 	instances:Arc<RwLock<HashMap<String,PathBuf>>>,
 	series:Arc<RwLock<HashMap<String,Vec<String>>>>,
 	studies:Arc<RwLock<HashMap<String,Vec<String>>>>,
+	temp:Arc<TempDir>
 }
 
 impl MultiFileAccess {
 	pub async fn new(objs:impl IntoIterator<Item=FileDicomObject<InMemDicomObject>>) -> Result<Self, StatusFailure> {
-		let mut ret = Self::default();
+		let mut ret =
+			Self{
+				instances: Arc::new(Default::default()),
+				series: Arc::new(Default::default()),
+				studies: Arc::new(Default::default()),
+				temp:Arc::new(TempDir::new().expect("Failed to create tempdir")),
+			};
 		for o in objs{
 			ret.store_file(o).await?;
 		}
 		Ok(ret)
-	}
-}
-
-impl Drop for MultiFileAccess {
-	fn drop(&mut self) {
-		if Arc::strong_count(&self.instances) <=1
-		{
-			let map = self.instances.blocking_read();
-			for (_,file) in map.iter() {
-				if let Err(e) = std::fs::remove_file(file){
-					error!("Failed to remove file: {} ({e})", file.display());
-				}
-			}
-		};
 	}
 }
 impl FileAccess for MultiFileAccess {
@@ -100,7 +97,7 @@ impl FileAccess for MultiFileAccess {
 	}
 
 	async fn get_path(&self, uid: &Self::Item) -> Result<PathBuf, StatusFailure> {
-		Ok(std::env::temp_dir().join(format!("Mr.{uid}.dcm")))
+		Ok(self.temp.path().join(format!("Mr.{uid}.dcm")))
 	}
 
 	async fn store_file(&mut self, obj: FileDicomObject<InMemDicomObject>) -> dimse::status::Status

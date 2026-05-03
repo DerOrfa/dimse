@@ -23,7 +23,7 @@ async fn test_store() -> Result<()>
 
 	let access = common::MultiFileAccess::new([]).await?;
 
-	let (addr, watcher,_) = common::init_server(access.clone()).await?;
+	let (addr, watcher,_) = common::init_server("TEST_SCP",[] , access.clone()).await?;
 
 	let mut client = Client::new(addr.into(),Some("TESTSCU"), [ENHANCED_MR_IMAGE_STORAGE])?;
 

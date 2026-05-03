@@ -147,7 +147,7 @@ pub enum FailureCode {
 	#[error("Out of resources")]
 	OutOfResourcesA = 0xA100,
 	#[error("Move Destination unknown")]
-	MoveDestination = 0xA201,
+	MoveDestinationUnknown = 0xA201,
 	#[error("Out of resources")]
 	OutOfResources = 0xA700,
 	#[error("Out of resources for Calculation")]

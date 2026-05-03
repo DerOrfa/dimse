@@ -9,19 +9,21 @@ use dicom_dictionary_std::tags;
 use dicom_ul::{AeAddr, FullAeAddr};
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 use dicom::core::VR;
 use dicom::dicom_value;
 use dicom::object::mem::InMemElement;
 use dicom_ul::association::Error::ConnectionClosed;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::task::JoinSet;
+use tokio::task::{spawn_blocking, JoinSet};
 use tracing::{debug, error};
 use crate::error::DimseError::UnsupportedPC;
 use crate::io::FileAccess;
 use crate::status::*;
 use futures::{Stream, StreamExt, TryStreamExt};
 use tokio::pin;
+use crate::client::Client;
 use crate::identifier::Identifier;
 
 pub struct Task<B> where B:FileAccess
@@ -72,7 +74,6 @@ impl<B> Task<B> where B:FileAccess
 		match &request.deref().command
 		{
 			RequestCode::C_STORE => {
-				debug!("Got STORE request");
 				if let Some(o) = request.take_attachment_obj(){
 					let ts = Taker::get_opt(&o,tags::TRANSFER_SYNTAX_UID).transpose()
 						.unwrap_or(self.assoc.context.select_ts(request.pc_id).map(|s|s.uid().to_string()))
@@ -136,7 +137,60 @@ impl<B> Task<B> where B:FileAccess
 					success().into()
 				} else { Err(failure(FailureCode::InvalidArgument)) }
 			}
-			RequestCode::C_MOVE => {todo!()}
+			RequestCode::C_MOVE => {
+				let mut ok_response:StatusOk=success().into();
+				if let Some(ident) = request.take_attachment_obj().map(Identifier::from){
+					let mut instances = self.backend.lookup(ident).await?;
+					let mut pend = pending(instances.size_hint().1.map(|l|l as u16));
+					let destination:String = Taker::take(&mut request.obj,tags::MOVE_DESTINATION)
+						.map_err(|_|failure(FailureCode::MissingAttribute).offending([tags::MOVE_DESTINATION]))?;
+					let destination= AeAddr::new(&destination,
+						self.assoc.peers.get(&destination).cloned()
+							.ok_or(failure(FailureCode::MoveDestinationUnknown))?
+					);
+					let local_ae = self.assoc.local.ae_title().to_string();
+					debug!("Contacting {destination} for C-MOVE");
+					if self.assoc.local_address().socket_addr() == destination.socket_addr(){
+						panic!("Wont talk to myself");
+					}
+					let destination_clone = destination.clone();
+					let mut client =
+						spawn_blocking(move||{
+							Client::new(destination_clone.clone(), Some(local_ae), [])
+							.map_err(|e|failure(FailureCode::Failure)
+								.comment(format!("Failed to contact {destination_clone} ({e})")))
+						}).await.unwrap()?;
+					while let Some(instance) = instances.next().await {
+						debug!("Sending {} to {destination}",self.backend.get_uid(&instance).await?);
+						let attr= [
+							InMemElement::new(tags::MOVE_ORIGINATOR_APPLICATION_ENTITY_TITLE, VR::AE,
+								destination.ae_title().unwrap().to_string()),
+							InMemElement::new(tags::MOVE_ORIGINATOR_MESSAGE_ID, VR::US, dicom_value!(request.id))
+						];
+						let file= self.backend.get_path(&instance).await
+							.map_err(|e|failure(FailureCode::InvalidSOPInstance).comment(e))?;
+
+						match Self::c_store_file_to(file.as_path(), &mut client, attr).await{
+							Ok(StatusOk::Success(_)) => pend.succeed(),
+							Ok(StatusOk::Warning(_)) => {
+								pend.warn()
+							},
+							Err(e) => {
+								ok_response.warn(StatusWarning::default()
+									.comment(e)
+									.missing([self.backend.get_uid(&instance).await?])
+								);
+								pend.fail()
+							},
+							_ => unreachable!() // should not happen
+						};
+
+						let resp = request.make_response(pend.clone());
+						self.assoc.send_payload(resp.try_into()?).await?;
+					}
+					Ok(ok_response)
+				} else { Err(failure(FailureCode::InvalidArgument)) }
+			}
 			RequestCode::C_ECHO => Ok(success().into()),
 			_ => {todo!()}
 		}
@@ -144,15 +198,15 @@ impl<B> Task<B> where B:FileAccess
 
 	async fn c_store(&mut self, instance:&B::Item, attr:impl IntoIterator<Item=InMemElement>) -> Status where
 	{
-		Self::c_store_to::<TaskPipe>(&self.backend, &mut self.assoc, instance, attr).await
-	}
-	async fn c_store_to<T>(backend:&B, assoc:&mut Association<T>, instance:&B::Item, attr:impl IntoIterator<Item=InMemElement>)
-		-> Status where Association<T>:SendPayload + ReceiveMessage
-	{
-		let file= backend.get_path(instance).await
+		let file= self.backend.get_path(instance).await
 			.map_err(|e|failure(FailureCode::InvalidSOPInstance).comment(e))?;
 
-		match assoc.store_file(&file,attr).await
+		Self::c_store_file_to::<TaskPipe>(file.as_path(), &mut self.assoc, attr).await
+	}
+	async fn c_store_file_to<T>(file:&Path, assoc:&mut Association<T>, attr:impl IntoIterator<Item=InMemElement>)
+		-> Status where Association<T>:SendPayload + ReceiveMessage
+	{
+		match assoc.store_file(file,attr).await
 		{
 			Ok(s) => Ok(s),
 			Err(UnsupportedPC { uid, name }) => {

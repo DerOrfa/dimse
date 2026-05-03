@@ -7,7 +7,7 @@ use dimse::error::Result;
 async fn test_server_probe() -> Result<()>
 {
 //	tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
-	let (addr, watcher,handle) = common::init_server(common::NullAccess).await?;
+	let (addr, watcher,handle) = common::init_server("TEST_SCP",[] , common::NullAccess).await?;
 
 	assert!(!handle.is_finished()); // should not be finished
 

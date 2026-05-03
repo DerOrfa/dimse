@@ -9,7 +9,7 @@ mod common;
 async fn test_echo() -> Result<()>
 {
 	// tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
-	let (addr, watcher,handle) = common::init_server(common::NullAccess).await?;
+	let (addr, watcher,handle) = common::init_server("TEST_SCP",[] , common::NullAccess).await?;
 
 	assert!(!handle.is_finished()); // should not be finished
 
