@@ -27,8 +27,8 @@ impl Client {
 		let peer = inner.0.inner_stream().peer_addr()?;
 		let local = inner.0.inner_stream().local_addr()?;
 		Ok(crate::association::Association::new(
-			FullAeAddr::new(inner.0.peer_ae_title(), peer),
 			FullAeAddr::new(calling_ae.unwrap_or("ANY-SCU"), local),
+			FullAeAddr::new(inner.0.peer_ae_title(), peer), [],
 			inner,
 			context
 		))

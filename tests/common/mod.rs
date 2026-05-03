@@ -33,7 +33,7 @@ pub async fn init_server<F: FileAccess + 'static>(accessor:F)
 	let addr = dicom_listener.local_addr()?;
 	let (signal_tx, signal_rx) = tokio::sync::watch::channel(());
 
-	let handle = spawn(dimse::serve(("TEST_SCP".to_string(),dicom_listener),signal_tx, accessor));
+	let handle = spawn(dimse::serve(("TEST_SCP".to_string(),dicom_listener),[],signal_tx, accessor));
 	Ok((addr, signal_rx, handle))
 }
 
@@ -43,6 +43,8 @@ pub struct NullAccess;
 impl FileAccess for NullAccess {
 	type Item = String;
 
+	async fn get_uid(&self, uid: &Self::Item) -> Result<String, StatusFailure> {unimplemented!()}
+
 	async fn get_path(&self, _: &Self::Item) -> Result<PathBuf, StatusFailure> {
 		unimplemented!()
 	}
@@ -51,7 +53,7 @@ impl FileAccess for NullAccess {
 		unimplemented!()
 	}
 
-	async fn lookup<'a>(&self, _: impl Into<Identifier>) -> Result<BoxStream<'a,ItemResult<Self::Item>>, StatusFailure> {
+	async fn lookup<'a>(&self, _: impl Into<Identifier>) -> Result<BoxStream<'a,Self::Item>, StatusFailure> {
 		unimplemented!()
 	}
 
@@ -93,6 +95,10 @@ impl Drop for MultiFileAccess {
 impl FileAccess for MultiFileAccess {
 	type Item = String;
 
+	async fn get_uid(&self, uid: &Self::Item) -> Result<String, StatusFailure> {
+		Ok(uid.to_string())
+	}
+
 	async fn get_path(&self, uid: &Self::Item) -> Result<PathBuf, StatusFailure> {
 		Ok(std::env::temp_dir().join(format!("Mr.{uid}.dcm")))
 	}
@@ -118,25 +124,25 @@ impl FileAccess for MultiFileAccess {
 		Ok(success().into())
 	}
 
-	async fn lookup<'a>(&self, ident: impl Into<Identifier> + Send) -> Result<BoxStream<'a,ItemResult<Self::Item>>, StatusFailure> {
+	async fn lookup<'a>(&self, ident: impl Into<Identifier> + Send) -> Result<BoxStream<'a,Self::Item>, StatusFailure> {
 		let ident = ident.into();
 		match ident.level {
 			Some(RetrieveLevel::IMAGE) => {
 				if let Some(sel_instance) = ident.contains(tags::SOP_INSTANCE_UID).and_then(|e|e.to_str().ok()){
-					Ok(stream::iter(vec![Ok(sel_instance.to_string())]).boxed())
+					Ok(stream::iter(vec![sel_instance.to_string()]).boxed())
 				} else {Err(failure(FailureCode::InvalidAttributeValue).offending([tags::SOP_INSTANCE_UID]))}
 			}
 			Some(RetrieveLevel::SERIES) => {
 				if let Some(sel_series) = ident.contains(tags::SERIES_INSTANCE_UID).and_then(|e|e.to_str().ok()){
 					let series = self.series.read().await;
-					let series:Vec<_> = series.get(&sel_series.to_string()).into_iter().flatten().map(|s| Ok(s.clone())).collect();
+					let series:Vec<_> = series.get(&sel_series.to_string()).into_iter().flatten().cloned().collect();
 					Ok(stream::iter(series).boxed())
 				} else {Err(failure(FailureCode::InvalidAttributeValue).offending([tags::SERIES_INSTANCE_UID]))}
 			}
 			Some(RetrieveLevel::STUDY) => {
 				if let Some(sel_study) = ident.contains(tags::STUDY_INSTANCE_UID).and_then(|e|e.to_str().ok()){
 					let study = self.series.read().await;
-					let study:Vec<_> = study.get(&sel_study.to_string()).into_iter().flatten().map(|s| Ok(s.clone())).collect();
+					let study:Vec<_> = study.get(&sel_study.to_string()).into_iter().flatten().cloned().collect();
 					Ok(stream::iter(study).boxed())
 				} else {Err(failure(FailureCode::InvalidAttributeValue).offending([tags::STUDY_INSTANCE_UID]))}
 			}

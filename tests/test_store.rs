@@ -27,7 +27,7 @@ async fn test_store() -> Result<()>
 
 	let mut client = Client::new(addr.into(),Some("TESTSCU"), [ENHANCED_MR_IMAGE_STORAGE])?;
 
-	client.store_file(&path).await?;
+	client.store_file(&path,[]).await?;
 	let stored_path = access.get_path(&uid).await?;
 	let stored_file = dicom::object::open_file(&stored_path)?;
 

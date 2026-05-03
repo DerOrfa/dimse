@@ -250,7 +250,7 @@ async fn main() -> dimse::error::Result<()>
 					}
 				});
 				for file in files{
-					client.store_file(&file).await?;
+					client.store_file(&file,[]).await?;
 					info!("Stored file {}", file.display());
 				}
 			}

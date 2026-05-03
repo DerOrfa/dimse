@@ -55,10 +55,11 @@ pub type ItemResult<I> = Result<I,StatusFailure>;
 pub trait FileAccess: Clone + Send + Sync
 {
 	type Item:Send + Sync;
+	fn get_uid(&self, uid:&Self::Item) -> impl Future<Output = Result<String, StatusFailure>> + Send;
 	fn get_path(&self, uid:&Self::Item) -> impl Future<Output = Result<PathBuf, StatusFailure>> + Send;
 	fn store_file(&mut self, file:FileDicomObject<InMemDicomObject>) -> impl Future<Output = Status> + Send;
 	fn lookup<'a>(&self, ident: impl Into<Identifier> + Send)
-		-> impl Future<Output = Result<BoxStream<'a,ItemResult<Self::Item>>, StatusFailure>> + Send;
+		-> impl Future<Output = Result<BoxStream<'a,Self::Item>, StatusFailure>> + Send;
 	fn find<'a>(&self, ident: impl Into<Identifier> + Send)
 		-> impl Future<Output = Result<BoxStream<'a,ItemResult<InMemDicomObject>>, StatusFailure>> + Send;
 }

@@ -1,15 +1,18 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use crate::association::{Association,ReceiveMessage, SendPayload};
 use crate::context::Context;
-use crate::definitions::{FailureCode, RequestCode, WarningCode};
+use crate::definitions::{FailureCode, RequestCode};
 use crate::msg::{MessageType, Request, Response};
 use crate::payload::Payload;
 use crate::{io, Taker};
 use dicom_dictionary_std::tags;
-use dicom_ul::{FullAeAddr};
+use dicom_ul::{AeAddr, FullAeAddr};
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, RwLock};
+use dicom::core::VR;
+use dicom::dicom_value;
+use dicom::object::mem::InMemElement;
 use dicom_ul::association::Error::ConnectionClosed;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinSet;
@@ -17,7 +20,7 @@ use tracing::{debug, error};
 use crate::error::DimseError::UnsupportedPC;
 use crate::io::FileAccess;
 use crate::status::*;
-use futures::{Stream, TryStreamExt};
+use futures::{Stream, StreamExt, TryStreamExt};
 use tokio::pin;
 use crate::identifier::Identifier;
 
@@ -50,8 +53,9 @@ impl<B> DerefMut for Task<B> where B:FileAccess
 impl<B> Task<B> where B:FileAccess
 {
 	pub fn new(
-		peer:FullAeAddr<SocketAddr>,
 		local:FullAeAddr<SocketAddr>,
+		peer:FullAeAddr<SocketAddr>,
+		peers:impl IntoIterator<Item=FullAeAddr<SocketAddr>>,
 		to_dispatch_sink:Sender<Payload>,
 		from_dispatch_source:Receiver<Response>,
 		context:Context,
@@ -60,7 +64,7 @@ impl<B> Task<B> where B:FileAccess
 	) -> Self where B:FileAccess
 	{
 		let pipe = TaskPipe{source: from_dispatch_source, msg_register, sink:to_dispatch_sink};
-		let assoc = Association::new(peer, local, pipe, context);
+		let assoc = Association::new( local, peer,peers, pipe, context);
 		Task{ assoc, backend}
 	}
 	pub async fn process(&mut self, request: &mut Request) -> Status
@@ -88,42 +92,30 @@ impl<B> Task<B> where B:FileAccess
 			RequestCode::C_GET => {
 				if let Some(o) = request.take_attachment_obj(){
 					let instances = self.backend.lookup(o).await?;
-					let mut failed:HashSet<_> = Default::default();
-					let mut fail_comment = Option::<String>::None;
 					let mut pend = pending(instances.size_hint().1.map(|e|e as u16));
 					pin!(instances);
 
-					while let Some(instance) = instances.try_next().await? {
-						match self.c_store(&instance).await{
+					while let Some(instance) = instances.next().await {
+						match self.c_store(&instance, []).await
+						{
 							Ok(s) => {
 								match s {
 									StatusOk::Success(_) => {pend.succeed();},
-									StatusOk::Warning (StatusWarning{ offending_element, comment, .. }) => {
+									StatusOk::Warning (_) => {
 										pend.warn();
-										for e in offending_element{
-											failed.insert(e);
-										}
-										fail_comment = fail_comment.xor(comment.clone());
 									}
-									_ => {panic!("Unexpected store result");}
+									_ => unreachable!()
 								}
 							},
-							Err(e) => {
-								fail_comment = fail_comment.xor(Some(e.to_string()));
+							Err(_) => {
+								// @todo handle failed stores in final response
 								pend.fail();
 							}
 						}
 						let resp = request.make_response(pend.clone());
 						self.assoc.send_payload(resp.try_into()?).await?;
 					}
-					if failed.is_empty(){Ok(success().into())}
-					else { // todo more details
-						match fail_comment {
-							None => warning(WarningCode::AttributeListWarning),
-							Some(c) => warning(WarningCode::AttributeListWarning).comment(c)
-						}
-						.offending(failed).into()
-					}
+					success().into()
 				} else { Err(failure(FailureCode::InvalidArgument)) }
 			}
 			RequestCode::C_FIND => {
@@ -135,7 +127,7 @@ impl<B> Task<B> where B:FileAccess
 					while let Some(mut ob) = instances.try_next().await?
 					{
 						pend.succeed();
-						// @todo spec says we should things we don't have as empty elements
+						// @todo spec says we should have things we don't have as empty elements
 						let resp = request
 							.make_response(pend.clone())
 							.with_identifier(ident.extract(&mut ob).0);
@@ -150,10 +142,17 @@ impl<B> Task<B> where B:FileAccess
 		}
 	}
 
-	async fn c_store(&mut self, instance: &B::Item) -> Status
+	async fn c_store(&mut self, instance:&B::Item, attr:impl IntoIterator<Item=InMemElement>) -> Status where
 	{
-		let file = self.backend.get_path(&instance).await?;
-		match self.assoc.store_file(&file).await
+		Self::c_store_to::<TaskPipe>(&self.backend, &mut self.assoc, instance, attr).await
+	}
+	async fn c_store_to<T>(backend:&B, assoc:&mut Association<T>, instance:&B::Item, attr:impl IntoIterator<Item=InMemElement>)
+		-> Status where Association<T>:SendPayload + ReceiveMessage
+	{
+		let file= backend.get_path(instance).await
+			.map_err(|e|failure(FailureCode::InvalidSOPInstance).comment(e))?;
+
+		match assoc.store_file(&file,attr).await
 		{
 			Ok(s) => Ok(s),
 			Err(UnsupportedPC { uid, name }) => {
@@ -171,8 +170,9 @@ impl<B> Task<B> where B:FileAccess
 	}
 
 	pub fn spawn(
-		address:FullAeAddr<SocketAddr>,
 		local:FullAeAddr<SocketAddr>,
+		address:FullAeAddr<SocketAddr>,
+		peers:impl IntoIterator<Item=FullAeAddr<SocketAddr>>,
 		to_dispatch:Sender<Payload>,
 		context: Context,
 		backend:B,
@@ -183,8 +183,9 @@ impl<B> Task<B> where B:FileAccess
 		let (to_task, from_dispatch) = channel(32);
 		let msg_register = Arc::<RwLock<HashMap<u16, RequestCode>>>::default();
 		let msg_register2 = msg_register.clone();
+		let peers:Vec<_> = peers.into_iter().collect();
 		let handle = set.spawn(async move {
-			let mut task = Task::new(address, local, to_dispatch, from_dispatch, context, backend, msg_register2);
+			let mut task = Task::new(local, address, peers, to_dispatch, from_dispatch, context, backend, msg_register2);
 			let result = task.process(&mut request).await;
 			let result = match request.make_response(result).try_into(){
 				Ok(p) => task.send_payload(p).await,

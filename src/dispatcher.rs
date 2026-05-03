@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::default::Default;
 use std::future::poll_fn;
-use dicom_ul::{Pdu};
+use std::net::SocketAddr;
+use dicom_ul::{FullAeAddr, Pdu};
 use dicom_ul::pdu::{PDataValue, PDataValueType};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{channel, Sender};
@@ -33,9 +34,9 @@ pub struct Dispatcher<B>  where B:FileAccess + 'static
 
 impl<B> Dispatcher<B> where B:FileAccess
 {
-	pub async fn new(ae_title:impl AsRef<str>, scu_stream: TcpStream, watcher:tokio::sync::watch::Sender<()>, file_access:B)  -> Result<Self>
+	pub async fn new(ae_title:impl AsRef<str>, scu_stream: TcpStream, peers:impl IntoIterator<Item=FullAeAddr<SocketAddr>>, watcher:tokio::sync::watch::Sender<()>, file_access:B)  -> Result<Self>
 	{
-		let ass = Server::new(ae_title.as_ref(),scu_stream).await?;
+		let ass = Server::new(ae_title.as_ref(),scu_stream, peers).await?;
 		Ok(Self{
 			ass, file_access,
 			state: OpenState::Open(watcher),
@@ -143,7 +144,9 @@ impl<B> Dispatcher<B> where B:FileAccess
 							lazy_attachment_to_string(req.attachment()).map(|s|trace!("{s}"));
 							let req_id = req.id;
 							let task = Task::spawn(
-								self.ass.peer.clone(), self.ass.local.clone(),
+								self.ass.local.clone(),
+								self.ass.peer.clone(),
+								self.ass.peers.iter().map(|(ae,socket)|FullAeAddr::new(ae,socket.clone())),
 								to_dispatch.clone(),
 								self.ass.context.clone(), self.file_access.clone(),
 								req,

@@ -3,6 +3,7 @@
 
 use std::io::Seek;
 use std::{format, vec};
+use std::collections::HashMap;
 use crate::definitions::RequestCode;
 use crate::error::DimseError::{UnexpectedEmptyMsg, UnexpectedMessageType, UnexpectedNonDataPdu};
 use crate::error::{DimseError, Result};
@@ -80,14 +81,17 @@ pub struct Association<A:Sized>
 	pub(crate) peer:FullAeAddr<SocketAddr>,
 	pub(crate) local:FullAeAddr<SocketAddr>,
 	pub(crate) inner:A,
+	pub(crate) peers:HashMap<String, SocketAddr>,
 	pub(crate) context:Context
 }
 
 impl<A> Association<A>
 {
-	pub fn new<'a>(peer:FullAeAddr<SocketAddr>, local:FullAeAddr<SocketAddr>, inner:A, context:Context) -> Self
+	pub fn new<'a>(local:FullAeAddr<SocketAddr>, peer:FullAeAddr<SocketAddr>, peers:impl IntoIterator<Item=FullAeAddr<SocketAddr>>, inner:A, context:Context) -> Self
 	{
-		Self{peer, local, inner, context}
+		let peers=peers.into_iter()
+			.map(|addr|(addr.ae_title().to_string(),addr.socket_addr().clone())).collect();
+		Self{ local, peer, peers, inner, context }
 	}
 	pub fn peer_address(&self) -> &FullAeAddr<SocketAddr>{&self.peer}
 	pub fn local_address(&self) -> &FullAeAddr<SocketAddr>{&self.local}
@@ -207,9 +211,9 @@ impl<A> Association<A>
 		self.send_request(rq).await.map(|_|PendingReceive::new(self,C_MOVE))
 	}
 
-	pub async fn store_file(&mut self, file:&Path) -> Result<StatusOk> where Self: SendPayload + ReceiveMessage
+	pub async fn store_file(&mut self, file:&Path, attr:impl IntoIterator<Item=InMemElement>) -> Result<StatusOk> where Self: SendPayload + ReceiveMessage
 	{
-		let mut req= self.new_request(C_STORE, uids::ENHANCED_MR_IMAGE_STORAGE,vec![])?;
+		let mut req= self.new_request(C_STORE, uids::ENHANCED_MR_IMAGE_STORAGE,attr)?;
 		let ret = req.attach_file(file,&self.context)?; // this will override the SOP Class above
 		self.send_request(req).await?;
 

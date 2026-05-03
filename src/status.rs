@@ -19,7 +19,7 @@ impl StatusOk{
 	/// Switches this ok-status to warning.
 	///
 	/// Appends offending elements and overrides comment/offset if they are set in the provided Warning.
-	pub fn warn(&mut self, mut w:StatusWarning) {
+	pub fn warn(&mut self, w:StatusWarning) {
 		match self{
 			StatusOk::Warning(s) => {
 				for i in w.offending_element{s.offending_element.insert(i);}

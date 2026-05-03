@@ -14,6 +14,7 @@ pub mod status;
 pub mod identifier;
 
 use std::io::{Cursor, Read};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use dicom::core::{DataDictionary, PrimitiveValue, Tag};
 use dicom::core::header::Header;
@@ -152,13 +153,14 @@ pub fn lazy_attachment_to_string(att:&Attachment) -> Option<String>
 // Specs
 // https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.html
 
-pub async fn serve<A>(listener:impl Into<FullAeAddr<TcpListener>>, watcher: Sender<()>, accessor:A)
+pub async fn serve<A>(listener:impl Into<FullAeAddr<TcpListener>>,peers:impl IntoIterator<Item=FullAeAddr<SocketAddr>>, watcher: Sender<()>, accessor:A)
 	-> Result<()> where A:FileAccess + 'static
 {
 	let listener = listener.into();
 	tracing::info!("SCP \"{}\" listening on: tcp://{}",
 		listener.ae_title(), listener.socket_addr().local_addr()?);
 
+	let peers:Vec<_> = peers.into_iter().collect();
 	loop {
 		let (stream,addr) = tokio::select! {
 			conn = listener.socket_addr().accept() => conn?,
@@ -171,8 +173,9 @@ pub async fn serve<A>(listener:impl Into<FullAeAddr<TcpListener>>, watcher: Send
 		let title = FullAeAddr::new(listener.ae_title(),addr);
 		let watcher = watcher.clone();
 		let accessor = accessor.clone();
+		let peers = peers.clone();
 		tokio::spawn(async move {
-			match Dispatcher::new(title.ae_title(),stream, watcher,accessor).await
+			match Dispatcher::new(title.ae_title(),stream, peers, watcher,accessor).await
 			{
 				Ok(d) => d.run().await
 					.unwrap_or_else(|e|error!("{title} aborted with error: \"{}\"", e)),

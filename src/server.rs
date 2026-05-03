@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::io::{Cursor, Read};
+use std::net::SocketAddr;
 use dicom::encoding::{TransferSyntax, TransferSyntaxIndex};
 use dicom::object::InMemDicomObject;
 use dicom::transfer_syntax::TransferSyntaxRegistry;
@@ -15,7 +16,7 @@ use crate::error::{DimseError, Result};
 
 pub struct Server(Option<AsyncServerAssociation<TcpStream>>);
 impl Server {
-	pub async fn new<'a>(ae_title:impl Into<Cow<'a,str>>, stream: TcpStream) -> Result<Association<Self>>
+	pub async fn new<'a>(ae_title:impl Into<Cow<'a,str>>, stream: TcpStream, peers:impl IntoIterator<Item=FullAeAddr<SocketAddr>>) -> Result<Association<Self>>
 	{
 		let ae_title = ae_title.into();
 		let local = FullAeAddr::new(ae_title.clone(),stream.local_addr()?);
@@ -24,7 +25,7 @@ impl Server {
 		let srv = Self::new_inner(ae_title.clone(), stream).await?;
 		let context = crate::context::Context::new(srv.presentation_contexts());
 
-		Ok(Association::new(local,peer,Server(Some(srv)),context))
+		Ok(Association::new(local,peer,peers,Server(Some(srv)),context))
 	}
 
 	async fn new_inner<'a>(ae_title:Cow<'a,str>, scu_stream: TcpStream) -> Result<AsyncServerAssociation<TcpStream>>
