@@ -139,13 +139,18 @@ impl TryInto<Payload> for Response
 		match self.status
 		{
 			Ok(StatusOk::Success(_)) => {}
-			Ok(StatusOk::Warning(StatusWarning{ offending_element, comment, .. }))
-			| Err(StatusFailure{offending_element, comment, ..})
+			Ok(StatusOk::Warning(StatusWarning{ offending_element, comment, failed_instance, .. }))
+			| Err(StatusFailure{offending_element, comment, failed_instance, ..})
 			=> {
 				if !offending_element.is_empty()
 				{
 					let e = SmallVec::<[_;2]>::from_iter(offending_element);
 					self.inner.obj.put(InMemElement::new(tags::OFFENDING_ELEMENT,VR::AT,PrimitiveValue::Tags(e)));
+				};
+				if !failed_instance.is_empty()
+				{
+					let e = SmallVec::<[_;2]>::from_iter(failed_instance);
+					self.inner.obj.put(InMemElement::new(tags::FAILED_SOP_INSTANCE_UID_LIST,VR::UI,PrimitiveValue::Strs(e)));
 				};
 				comment.map(|c|self.inner.obj.put(InMemElement::new(tags::ERROR_COMMENT,VR::AT, c)));//@todo check for other comments
 			}

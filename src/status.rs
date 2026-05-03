@@ -14,6 +14,23 @@ pub enum StatusOk{
 	Warning(StatusWarning),
 }
 
+impl StatusOk{
+
+	/// Switches this ok-status to warning.
+	///
+	/// Appends offending elements and overrides comment/offset if they are set in the provided Warning.
+	pub fn warn(&mut self, mut w:StatusWarning) {
+		match self{
+			StatusOk::Warning(s) => {
+				for i in w.offending_element{s.offending_element.insert(i);}
+				if w.offset != 0 {s.offset = w.offset}
+				if w.comment.is_some(){s.comment = w.comment};
+			},
+			s => *s = StatusOk::Warning(w),
+		}
+	}
+}
+
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct  StatusSuccess;
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -28,6 +45,7 @@ pub struct StatusPending {
 pub struct StatusWarning{
 	code: WarningCode,
 	pub offending_element:HashSet<Tag>,
+	pub failed_instance:Vec<String>,
 	pub comment:Option<String>,
 	offset:u16,
 }
@@ -35,6 +53,7 @@ pub struct StatusWarning{
 pub struct StatusFailure{
 	code:FailureCode,
 	pub offending_element:HashSet<Tag>,
+	pub failed_instance:Vec<String>,
 	pub comment:Option<String>,
 	offset:u16,
 }
@@ -234,26 +253,45 @@ impl Comment for StatusWarning {
 ///////////////////////////////////// offending /////////////////////////////////////
 
 pub trait Offending{
-	fn offend(&mut self, offender:impl IntoIterator<Item=Tag>);
+	fn offend(&mut self, offender:impl IntoIterator<Item=Tag>) -> &mut Self;
 	fn offending(mut self, offender:impl IntoIterator<Item=Tag>) -> Self where Self: Sized{
 		self.offend(offender);
+		self
+	}
+	fn miss(&mut self, missing:String) -> &mut Self;
+	fn missing(mut self, missing:impl IntoIterator<Item=String>) -> Self where Self: Sized{
+		for instance in missing
+		{
+			self.miss(instance);
+		}
 		self
 	}
 }
 
 impl Offending for StatusWarning{
-	fn offend(&mut self, offender: impl IntoIterator<Item=Tag>) {
+	fn offend(&mut self, offender: impl IntoIterator<Item=Tag>) -> &mut Self
+	{
 		for t in offender{
 			self.offending_element.insert(t);
 		}
+		self
+	}
+	fn miss(&mut self, missing:String) -> &mut Self{
+		self.failed_instance.push(missing);
+		self
 	}
 }
 
 impl Offending for StatusFailure{
-	fn offend(&mut self, offender: impl IntoIterator<Item=Tag>) {
+	fn offend(&mut self, offender: impl IntoIterator<Item=Tag>) -> &mut Self {
 		for t in offender{
 			self.offending_element.insert(t);
 		}
+		self
+	}
+	fn miss(&mut self, missing:String) -> &mut Self{
+		self.failed_instance.push(missing);
+		self
 	}
 }
 
