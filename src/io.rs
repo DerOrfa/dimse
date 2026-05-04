@@ -1,54 +1,18 @@
 use std::backtrace::Backtrace;
 use std::fs::File;
-use super::error::DimseError::TransferSyntaxNotFound;
-use dicom::encoding::TransferSyntaxIndex;
 use dicom::object::{FileDicomObject, FileMetaTable, FileMetaTableBuilder, InMemDicomObject, OpenFileOptions, ReadError};
-use dicom::transfer_syntax::TransferSyntaxRegistry;
-use dicom_ul::pdu::{PDataValue, PDataValueType};
-use snafu::{GenerateImplicitData, ResultExt};
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use snafu::{GenerateImplicitData};
+use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use dicom_dictionary_std::tags;
 use futures::{stream, Stream, StreamExt};
 use futures::stream::BoxStream;
-use tokio::sync::mpsc::Receiver;
 use tokio::task::spawn_blocking;
 use tracing::error;
 use crate::definitions::FailureCode;
-use crate::error::DimseError;
 use crate::status::{failure, Comment, Status, StatusFailure};
 use crate::Taker;
 use crate::identifier::Identifier;
-
-pub struct PipeDataReader<'a>{
-	source: &'a mut Receiver<PDataValue>,
-	last: PDataValue,
-}
-impl<'a> PipeDataReader<'a> {
-	pub(crate) fn new(source: &'a mut Receiver<PDataValue>) -> Self {
-		PipeDataReader{source,last:PDataValue{
-			presentation_context_id:0,
-			value_type:PDataValueType::Data,
-			is_last: false,
-			data: vec![],
-		}}
-	}
-}
-
-impl<'a> Read for PipeDataReader<'a> {
-	fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
-		if self.last.data.is_empty(){
-			if self.last.is_last{return Ok(0)}
-			match self.source.blocking_recv() {
-				Some(v) => self.last = v,
-				None => return Ok(0)
-			}
-		}
-		let written = buf.write(&self.last.data)?;
-		self.last.data.drain(.. written);
-		Ok(written)
-	}
-}
 
 pub type ItemResult<I> = Result<I,StatusFailure>;
 
@@ -64,27 +28,7 @@ pub trait FileAccess: Clone + Send + Sync
 		-> impl Future<Output = Result<BoxStream<'a,ItemResult<InMemDicomObject>>, StatusFailure>> + Send;
 }
 
-pub async fn read_pipe(source: &mut Option<Receiver<PDataValue>>, prelude: Vec<u8>, ts:String)
-                       -> crate::error::Result<InMemDicomObject>
-{
-	let ts = TransferSyntaxRegistry.get(ts.as_str()).ok_or(TransferSyntaxNotFound{ts})?;
-	let prelude = Cursor::new(prelude);
-
-	// take the receiver and move it into a sync block
-	let mut s =  source.take().expect("There must be a receiver");
-	let (r,s) = spawn_blocking(move || {
-		// chain the prelude and the pipe-reader and read that as dicom object
-		let buffer = prelude.chain(PipeDataReader::new(&mut s));
-		InMemDicomObject::read_dataset_with_ts(buffer, &ts).map(|e|(e,s))
-	}).await.expect("Reading thread panicked")
-		.whatever_context::<_,DimseError>("asynchronous reading of stream failed")?;
-
-	// got our receiver back, put it back in place
-	source.replace(s);
-	Ok(r)
-}
-
-pub fn make_file(obj: InMemDicomObject, ts:&str) -> Result<FileDicomObject<InMemDicomObject>,StatusFailure>
+pub(crate) fn make_file(obj: InMemDicomObject, ts:&str) -> Result<FileDicomObject<InMemDicomObject>,StatusFailure>
 {
 	let file_meta = FileMetaTableBuilder::new().transfer_syntax(ts);
 	let uid = Taker::get(&obj,tags::SOP_INSTANCE_UID).ok().unwrap_or("file".to_string());
@@ -100,7 +44,7 @@ pub fn make_file(obj: InMemDicomObject, ts:&str) -> Result<FileDicomObject<InMem
 	}
 }
 
-pub fn get_filemeta(path:impl AsRef<Path>) -> Result<(FileMetaTable,u64), ReadError>
+pub(crate) fn get_filemeta(path:impl AsRef<Path>) -> Result<(FileMetaTable,u64), ReadError>
 {
 	let path = path.as_ref();
 	let mut file =	File::open(path).map_err(|e|ReadError::OpenFile {
@@ -135,5 +79,4 @@ pub fn stream_files<T>(files:T) -> impl Stream<Item=ItemResult<InMemDicomObject>
 			).await.unwrap()
 		}
 	})
-
 }

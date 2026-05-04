@@ -9,26 +9,26 @@ use std::collections::HashMap;
 
 
 #[derive(Debug, Clone, Default)]
-pub struct Context{
+pub(crate) struct Context{
 	pcs:HashMap<u8,PresentationContextNegotiated>,
 	reg:TransferSyntaxRegistry
 }
 
 impl Context
 {
-	pub fn new(cntx:&[PresentationContextNegotiated]) -> Self{
+	pub(crate) fn new(cntx:&[PresentationContextNegotiated]) -> Self{
 		let pcs= cntx.iter().map(|c|(c.id,c.clone())).collect();
 		Context{ pcs, ..Default::default() }
 	}
 	pub fn select_pc(&self, pc_id:u8) -> &PresentationContextNegotiated{
 		self.pcs.get(&pc_id).expect(format!("Invalid presentation context id: {}", pc_id).as_str())
 	}
-	pub fn select_ts(&self, pc_id:u8) -> Result<&TransferSyntax>
+	pub(crate) fn select_ts(&self, pc_id:u8) -> Result<&TransferSyntax>
 	{
 		let ts = &self.select_pc(pc_id).transfer_syntax;
 		self.reg.get(ts).ok_or(TransferSyntaxNotFound{ts:ts.clone()})
 	}
-	pub fn find_pc(&self, uid:impl ToString) -> Result<&PresentationContextNegotiated>
+	pub(crate) fn find_pc(&self, uid:impl ToString) -> Result<&PresentationContextNegotiated>
 	{
 		let uid = uid.to_string();
 		match self.pcs.iter().find(|(_,ctx)|ctx.abstract_syntax == uid)
@@ -41,7 +41,7 @@ impl Context
 			Some((_,pc)) => Ok(pc)
 		}
 	}
-	pub fn find_ts(&self, uid:impl ToString) -> Result<&TransferSyntax>
+	pub(crate) fn find_ts(&self, uid:impl ToString) -> Result<&TransferSyntax>
 	{
 		let uid = uid.to_string();
 		match self.pcs.iter().find(|(_,ctx)|ctx.transfer_syntax == uid)
@@ -54,7 +54,7 @@ impl Context
 			Some((id,_)) => self.select_ts(*id)
 		}
 	}
-	pub fn match_file(&self, meta:&FileMetaTable) -> Option<&PresentationContextNegotiated>
+	pub(crate) fn match_file(&self, meta:&FileMetaTable) -> Option<&PresentationContextNegotiated>
 	{
 		let pc = meta.media_storage_sop_class_uid();
 		let ts = meta.transfer_syntax();

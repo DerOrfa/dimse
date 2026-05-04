@@ -155,8 +155,8 @@ impl<B> Task<B> where B:FileAccess
 					}
 					let destination_clone = destination.clone();
 					let mut client = Client::new(destination_clone.clone(), Some(local_ae), []).await
-							.map_err(|e|failure(FailureCode::Failure)
-								.comment(format!("Failed to contact {destination_clone} ({e})")))?;
+						.map_err(|e|failure(FailureCode::Failure)
+							.comment(format!("Failed to contact {destination_clone} ({e})")))?;
 					while let Some(instance) = instances.next().await {
 						debug!("Sending {} to {destination}",self.backend.get_uid(&instance).await?);
 						let attr= [

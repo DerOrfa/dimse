@@ -23,7 +23,7 @@ enum OpenState{
 	Closing,
 	Closed
 }
-pub struct Dispatcher<B>  where B:FileAccess + 'static
+pub(crate) struct Dispatcher<B>  where B:FileAccess + 'static
 {
 	ass:ServerAssoc,
 	state:OpenState,
@@ -34,7 +34,7 @@ pub struct Dispatcher<B>  where B:FileAccess + 'static
 
 impl<B> Dispatcher<B> where B:FileAccess
 {
-	pub async fn new(ae_title:impl AsRef<str>, scu_stream: TcpStream, peers:impl IntoIterator<Item=FullAeAddr<SocketAddr>>, watcher:tokio::sync::watch::Sender<()>, file_access:B)  -> Result<Self>
+	pub(crate) async fn new(ae_title:impl AsRef<str>, scu_stream: TcpStream, peers:impl IntoIterator<Item=FullAeAddr<SocketAddr>>, watcher:tokio::sync::watch::Sender<()>, file_access:B)  -> Result<Self>
 	{
 		let ass = Server::new(ae_title.as_ref(),scu_stream, peers).await?;
 		Ok(Self{
@@ -97,7 +97,7 @@ impl<B> Dispatcher<B> where B:FileAccess
 					t.handle.abort();
 				}
 				return Ok(())
-			}, // actually should never happen, as outer tool terminates on "Closed"
+			},// actually should never happen, as outer tool terminates on "Closed"
 		};
 		if let Some(pdu) = pdu {
 			trace!("next pdu => {:?}", pdu);

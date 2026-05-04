@@ -24,7 +24,7 @@ use dimse::error::DimseError;
 use snafu::prelude::*;
 use dimse::{RetrieveLevel, Taker};
 use indicatif::{ProgressBar, ProgressStyle};
-use dimse::association::{Association, Release, SendPayload};
+use dimse::association::{Release, SendPayload};
 use dimse::definitions::RequestCode::C_GET;
 use dimse::pending_receive::PendingStore;
 

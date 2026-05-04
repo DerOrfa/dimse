@@ -15,16 +15,14 @@ pub mod identifier;
 
 use std::io::{Cursor, Read};
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use dicom::core::{DataDictionary, PrimitiveValue, Tag};
 use dicom::core::header::Header;
 use dicom::core::value::{ConvertValueError, DicomValueType, Value};
 use dicom::dump::DumpOptions;
-use dicom::object::{InMemDicomObject, OpenFileOptions};
+use dicom::object::InMemDicomObject;
 use dicom::object::mem::InMemElement;
-use dicom_dictionary_std::{tags, StandardDataDictionary};
+use dicom_dictionary_std::{StandardDataDictionary};
 use dicom_ul::{FullAeAddr};
-use futures::{stream, Stream, StreamExt};
 use snafu::ResultExt;
 use tokio::net::TcpListener;
 use tokio::sync::watch::Sender;
@@ -34,7 +32,6 @@ use crate::dispatcher::Dispatcher;
 use crate::io::{FileAccess};
 use crate::payload::Attachment;
 use strum::{AsRefStr, EnumString};
-use tokio::task::spawn_blocking;
 
 #[derive(AsRefStr, EnumString, Clone, Debug)]
 pub enum RetrieveLevel
@@ -124,7 +121,7 @@ impl Taker for InMemElement
 	}
 }
 
-pub fn lazy_dump_to_string<D>(obj:&InMemDicomObject<D>) -> Option<String> where D:DataDictionary
+pub(crate) fn lazy_dump_to_string<D>(obj:&InMemDicomObject<D>) -> Option<String> where D:DataDictionary
 {
 	let mut obj_str:Cursor<Vec<u8>> = Default::default();
 	match DumpOptions::new().dump_object_to(&mut obj_str, obj) {
@@ -137,7 +134,7 @@ pub fn lazy_dump_to_string<D>(obj:&InMemDicomObject<D>) -> Option<String> where 
 		Err(_) => None
 	}
 }
-pub fn lazy_attachment_to_string(att:&Attachment) -> Option<String>
+pub(crate) fn lazy_attachment_to_string(att:&Attachment) -> Option<String>
 {
 	match att {
 		Attachment::File { path, .. } => {
@@ -184,14 +181,4 @@ pub async fn serve<A>(listener:impl Into<FullAeAddr<TcpListener>>,peers:impl Int
 		});
 	}
 	Ok(())
-}
-
-pub fn stream_files(source:impl IntoIterator<Item=PathBuf>) -> impl Stream<Item=Result<InMemDicomObject>>
-{
-	stream::iter(source).then( async move|p|{
-		spawn_blocking(
-			move || OpenFileOptions::new().read_until(tags::PIXEL_DATA).open_file(p.clone())
-				.map_err(|e|e.into())
-		).await.unwrap().map(|o|o.into_inner())
-	})
 }

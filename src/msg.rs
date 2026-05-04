@@ -172,7 +172,7 @@ impl TryInto<Payload> for Response
 
 impl Message
 {
-	pub fn read_from_data(data:Vec<PDataValue>, context: &Context) -> crate::Result<MessageType>
+	pub(crate) fn read_from_data(data:Vec<PDataValue>, context: &Context) -> crate::Result<MessageType>
 	{
 		if data.is_empty(){return Err(UnexpectedEmptyMsg)}
 		if !data.last().unwrap().is_last{return Err(IncompleteMsg)}
@@ -283,7 +283,7 @@ impl Message
 	///
 	/// Failing that, it will try to fall back to ENHANCED_MR_IMAGE_STORAGE and failing that, to MR_IMAGE_STORAGE.
 	/// Hence, it might change the abstract syntax of the request.
-	pub fn attach_file(&mut self, filename:impl AsRef<Path>, context: &Context) -> Result<StatusOk, StatusFailure>
+	pub(crate) fn attach_file(&mut self, filename:impl AsRef<Path>, context: &Context) -> Result<StatusOk, StatusFailure>
 	{
 		let filename = filename.as_ref();
 		// read metadata header
@@ -391,11 +391,6 @@ impl Request {
 		self.attach(ident);
 		self
 	}
-	pub fn with_file(mut self, filename: impl AsRef<Path>, context: &Context) -> crate::Result<Self>
-	{
-		self.attach_file(filename,context)?;
-		Ok(self)
-	}
 	pub fn make_response(&self, status: impl Into<Status>) -> Response
 	{
 		Response
@@ -411,10 +406,5 @@ impl Response {
 	{
 		self.attach(ident);
 		self
-	}
-	pub fn with_file(mut self, filename:&Path, context: &Context) -> crate::Result<Self>
-	{
-		self.attach_file(filename,context)?;
-		Ok(self)
 	}
 }

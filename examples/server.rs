@@ -192,7 +192,7 @@ impl FileAccess for Accessor
 	async fn find<'a>(&self, ident: impl Into<Identifier> + Send) -> Result<BoxStream<'a,ItemResult<InMemDicomObject>>, StatusFailure>
 	{
 		let ident = ident.into();
-		match ident.level{
+		let first_in = match ident.level{
 			Some(RetrieveLevel::IMAGE) => {
 				let stream = self.stream_files(None).filter_map(move|r|{
 					let ident = ident.clone();
@@ -200,38 +200,28 @@ impl FileAccess for Accessor
 						r.map(|(_,o)|ident.matches_all(&o).then_some(o)).transpose()
 					}
 				});
-				Ok(stream.boxed())
+				return Ok(stream.boxed());
 			}
 			Some(RetrieveLevel::SERIES) => {
 				let files = self.files.read().await;
-				let series = self.series.read().await;
-
-				let first_in_series:Vec<_> =  series.iter()
+				self.series.read().await.iter()
 					.filter_map(|(_,v)|v.first())
-					.map(|s|files.get(s).cloned().unwrap()).collect();
-				let stream = io::stream_files(first_in_series).filter_map(move|r|{
-					let ident = ident.clone();
-					async move {
-						r.map(|o|ident.matches_all(&o).then_some(o)).transpose()
-					}
-				});
-				Ok(stream.boxed())
+					.map(|s|files.get(s).cloned().unwrap()).collect::<Vec<_>>()
 			}
 			Some(RetrieveLevel::STUDY) => {
 				let files = self.files.read().await;
-				let first_in_studies:Vec<_> =  self.studies.read().await.iter()
+				self.studies.read().await.iter()
 					.filter_map(|(_,v)|v.first())
-					.map(|s|files.get(s).cloned().unwrap()).collect();
-				let stream = io::stream_files(first_in_studies).filter_map(move|r|{
-					let ident = ident.clone();
-					async move {
-						r.map(|o|ident.matches_all(&o).then_some(o)).transpose()
-					}
-				});
-				Ok(stream.boxed())
+					.map(|s|files.get(s).cloned().unwrap()).collect::<Vec<_>>()
 			}
-			_ => Err(failure(MissingAttribute).offending([tags::QUERY_RETRIEVE_LEVEL]))
-		}
+			_ => return Err(failure(MissingAttribute).offending([tags::QUERY_RETRIEVE_LEVEL]))
+		};
+		Ok(io::stream_files(first_in).filter_map(move|r|{
+			let ident = ident.clone();
+			async move {
+				r.map(|o|ident.matches_all(&o).then_some(o)).transpose()
+			}
+		}).boxed())
 	}
 }
 

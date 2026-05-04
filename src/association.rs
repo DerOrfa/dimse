@@ -1,7 +1,7 @@
 #![allow(async_fn_in_trait)]
 // todo https://doc.rust-lang.org/nightly/nightly-rustc/rustc_lint/async_fn_in_trait/static.ASYNC_FN_IN_TRAIT.html
 
-use std::io::{Read, Seek};
+use std::io::Read;
 use std::{format, vec};
 use std::collections::HashMap;
 use crate::definitions::RequestCode;
@@ -16,7 +16,7 @@ use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom_ul::pdu::{PDataValue, PresentationContextNegotiated};
 use dicom_ul::{FullAeAddr, Pdu};
 use snafu::ResultExt;
-use std::io::{Cursor, SeekFrom, Write};
+use std::io::{Cursor, SeekFrom};
 use std::net::SocketAddr;
 use std::ops::DerefMut;
 use std::path::{Path};
@@ -37,29 +37,16 @@ use crate::{io, msg, Taker};
 use crate::context::Context;
 use crate::status::{StatusOk, StatusPending, StatusSuccess};
 
-pub enum Sink<'a>
-{
-	Async(Box<dyn AsyncWrite + Send + Unpin + 'a>),
-	Sync(Box<dyn Write + Send + 'a>)
-}
 pub(crate) trait SendPdu
 {
 	async fn send_obj(&mut self, pc_id:u8, ts:&TransferSyntax, obj:InMemDicomObject) -> Result<()>;
 	async fn send_pdu(&mut self, pdu: &Pdu) -> Result<()>;
-	fn get_sink(&mut self, pc_id: u8) -> Result<Sink<'_>>;
+	fn get_sink<'a>(&'a mut self, pc_id: u8) -> Result<Box<dyn AsyncWrite + Send + Unpin +'a>>;
 	async fn send_file(&mut self, path: &Path, offset: SeekFrom, pc_id: u8) -> Result<u64> {
-		match self.get_sink(pc_id)? {
-			Sink::Async(mut a) => {
-				let mut source = tokio::fs::File::open(path).await?;
-				tokio::fs::File::seek(&mut source, offset).await?;
-				tokio::io::copy(&mut source, a.deref_mut()).await.map_err(|e|e.into())
-			}
-			Sink::Sync(mut s) => {
-				let mut source = std::fs::File::open(path)?;
-				source.seek(offset)?;
-				std::io::copy(&mut source, s.deref_mut()).map_err(|e|e.into())
-			}
-		}
+		let mut sink = self.get_sink(pc_id)?;
+		let mut source = tokio::fs::File::open(path).await?;
+		tokio::fs::File::seek(&mut source, offset).await?;
+		tokio::io::copy(&mut source, sink.deref_mut()).await.map_err(|e|e.into())
 	}
 }
 pub trait SendPayload
@@ -91,7 +78,7 @@ pub struct Association<A:Sized>
 
 impl<A> Association<A>
 {
-	pub fn new<'a>(local:FullAeAddr<SocketAddr>, peer:FullAeAddr<SocketAddr>, peers:impl IntoIterator<Item=FullAeAddr<SocketAddr>>, inner:A, context:Context) -> Self
+	pub(crate) fn new<'a>(local:FullAeAddr<SocketAddr>, peer:FullAeAddr<SocketAddr>, peers:impl IntoIterator<Item=FullAeAddr<SocketAddr>>, inner:A, context:Context) -> Self
 	{
 		let peers=peers.into_iter()
 			.map(|addr|(addr.ae_title().to_string(),addr.socket_addr().clone())).collect();
@@ -177,11 +164,6 @@ impl<A> Association<A>
 	{
 		self.context.find_pc(sop_class)
 			.map(|ctx|Request::new(command, ctx, attr))
-	}
-	pub fn new_store_request(&self, file: impl AsRef<Path>) -> Result<Request> where Self: SendPayload
-	{
-		self.new_request(C_STORE, uids::ENHANCED_MR_IMAGE_STORAGE,vec![])?
-			.with_file(file,&self.context) // this will override the SOP Class above
 	}
 	pub async fn find(&'_ mut self, level: RetrieveLevel, attr:impl IntoIterator<Item = InMemElement>)
 		-> Result<PendingReceive<'_, A>> where Self: ReceiveMessage + SendPayload + Unpin
@@ -302,10 +284,9 @@ impl<A> SendPayload for Association<A> where A:SendPdu
 			Attachment::SmallObj(o) => {
 				let mut buf = Cursor::new(Vec::new());
 				o.write_dataset_with_ts(&mut buf,self.context.select_ts(pc_id)?)?;
-				match self.inner.get_sink(pc_id)?{
-					Sink::Async(mut a) => a.write_all(buf.get_ref()).await,
-					Sink::Sync(mut s) => s.write_all(buf.get_ref()),
-				}.map_err(|e| e.into())
+				let mut sink = self.inner.get_sink(pc_id)?;
+				sink.deref_mut().write_all(buf.get_ref()).await
+					.map_err(|e| e.into())
 			}
 			Attachment::Obj(o) => {
 				debug!("{} sending large object to {}", self.local, self.peer);
@@ -357,7 +338,8 @@ impl<T> ReceivePdu for Option<T> where T:AsyncAssociation<tokio::net::TcpStream>
 	}
 }
 
-impl<T> SendPdu for Option<T>  where T:AsyncAssociation<tokio::net::TcpStream> + Send + 'static {
+impl<T> SendPdu for Option<T>  where T:AsyncAssociation<tokio::net::TcpStream> + Send + 'static
+{
 	async fn send_obj(&mut self, pc_id: u8, ts: &TransferSyntax, o: InMemDicomObject) -> Result<()> {
 		// check out the association
 		let mut checkout = self.take().expect("trying to check out already checked out connection");
@@ -381,16 +363,17 @@ impl<T> SendPdu for Option<T>  where T:AsyncAssociation<tokio::net::TcpStream> +
 		}
 	}
 
-	fn get_sink(&mut self, pc_id: u8) -> Result<Sink<'_>> {
+	fn get_sink<'a>(&'a mut self, pc_id: u8) -> Result<Box<dyn AsyncWrite + Send + Unpin + 'a>> {
 		let sink = match self {
 			None => panic!("trying to use a checked out connection"),
 			Some(s) => Box::new(s.send_pdata(pc_id)),
 		};
-		Ok(Sink::Async(sink))
+		Ok(sink)
 	}
 }
 
-pub trait Release{
+pub trait Release
+{
 	async fn release(self) -> Result<()>;
 }
 
