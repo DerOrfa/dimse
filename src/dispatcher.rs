@@ -8,13 +8,13 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::task::{JoinSet};
 use tracing::{debug, error, info, trace, warn};
-use crate::association::{Association, SendPayload};
+use crate::association::SendPayload;
 use crate::error::DimseError::UnexpectedResponse;
 use crate::io::FileAccess;
 use crate::lazy_attachment_to_string;
 use crate::msg::{Message, MessageType};
 use crate::payload::Payload;
-use crate::server::Server;
+use crate::server::{Server, ServerAssoc};
 use crate::task::{Task, TaskHandle};
 use super::error::{DimseError, Result};
 
@@ -25,7 +25,7 @@ enum OpenState{
 }
 pub struct Dispatcher<B>  where B:FileAccess + 'static
 {
-	ass:Association<Server>,
+	ass:ServerAssoc,
 	state:OpenState,
 	tasks:HashMap<u16,TaskHandle>,
 	join_set:JoinSet<(u16, Result<()>)>,

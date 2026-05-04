@@ -7,7 +7,7 @@ use dimse::association::SendPayload;
 use dimse::client::Client;
 use dimse::definitions::RequestCode::C_MOVE;
 use dimse::error::Result;
-use dimse::pending_receive::{PendingReceive, PendingStore};
+use dimse::pending_receive::PendingReceive;
 use dimse::{RetrieveLevel, Taker};
 use futures::TryStreamExt;
 use std::collections::HashMap;
