@@ -111,16 +111,16 @@ impl<B> Dispatcher<B> where B:FileAccess
 			Pdu::PData { data } => self.dispatch(sink,data).await?,
 			Pdu::ReleaseRQ => {
 				debug!("{} asked to release the connection, closing ..", self.ass.peer_address());
-				self.ass.send_pdu(&Pdu::ReleaseRP).await?;
 				self.state = OpenState::Closed;
+				self.ass.send_pdu(&Pdu::ReleaseRP).await?;
 			}
 			Pdu::ReleaseRP => {
 				self.state=OpenState::Closed;
 				debug!("{} confirmed release. Bye...", self.ass.peer_address());
 			},
 			Pdu::AbortRQ { source } => {
-				warn!("Aborted connection from: {:?}", source);
 				self.state=OpenState::Closed;
+				warn!("Aborted connection from: {:?}", source);
 			}
 			Pdu::AssociationRQ(_)|Pdu::AssociationAC(_)|Pdu::AssociationRJ(_)|Pdu::Unknown { .. } =>
 				warn!("Ignoring unexpected {} from {}",pdu.short_description(), self.ass.peer_address()),
@@ -180,15 +180,16 @@ impl<B> Dispatcher<B> where B:FileAccess
 		let (sink, mut from_tasks) = channel::<Payload>(32);
 		loop {
 			tokio::select! {
-					n = self.next(&sink) => {n?},
-					Some(payload) = from_tasks.recv() => {
-						self.ass.send_payload(payload).await?;
-					}
+				n = self.next(&sink) => {n?},
+				Some(payload) = from_tasks.recv() => {
+					self.ass.send_payload(payload).await?;
 				}
-			if let OpenState::Closed = self.state {break}
+			}
+			if let OpenState::Closed = self.state {
+				break
+			}
 		}
 		info!("association {} => {} is closed", self.ass.peer_address(), self.ass.local_address());
-		self.ass.release().await?;
 		Ok(())
 	}
 
