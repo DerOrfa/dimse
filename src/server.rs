@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::net::SocketAddr;
 use dicom::transfer_syntax::TransferSyntaxRegistry;
 use dicom_ul::{FullAeAddr, ServerAssociationOptions};
-use dicom_ul::association::AsyncServerAssociation;
+use dicom_ul::association::{Association, AsyncServerAssociation};
 use tracing::debug;
 use crate::error::Result;
 
@@ -13,9 +13,10 @@ impl Server {
 	{
 		let ae_title = ae_title.into();
 		let local = FullAeAddr::new(ae_title.clone(),stream.local_addr()?);
-		let peer = FullAeAddr::new(ae_title.clone(),stream.peer_addr()?);
+		let peer = stream.peer_addr()?;
 		debug!("New connection from {peer}");
 		let srv = Self::new_inner(ae_title.clone(), stream).await?;
+		let peer = FullAeAddr::new(srv.peer_ae_title(),peer);
 		let context = crate::context::Context::new(srv.presentation_contexts());
 
 		Ok(crate::association::Association::new(local,peer,peers,Some(srv),context))
