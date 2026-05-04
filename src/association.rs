@@ -1,7 +1,7 @@
 #![allow(async_fn_in_trait)]
 // todo https://doc.rust-lang.org/nightly/nightly-rustc/rustc_lint/async_fn_in_trait/static.ASYNC_FN_IN_TRAIT.html
 
-use std::io::Seek;
+use std::io::{Read, Seek};
 use std::{format, vec};
 use std::collections::HashMap;
 use crate::definitions::RequestCode;
@@ -21,11 +21,15 @@ use std::net::SocketAddr;
 use std::ops::DerefMut;
 use std::path::{Path};
 use dicom::object::mem::InMemElement;
+use dicom::transfer_syntax::{TransferSyntaxIndex, TransferSyntaxRegistry};
 use dicom_dictionary_std::tags;
 use dicom_dictionary_std::uids;
+use dicom_ul::association::AsyncAssociation;
 use futures::StreamExt;
 use futures::stream::FusedStream;
 use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::task::spawn_blocking;
+use tokio_util::io::SyncIoBridge;
 use tracing::{debug, trace, warn};
 use crate::{lazy_attachment_to_string, RetrieveLevel};
 use crate::definitions::RequestCode::{C_FIND, C_GET, C_MOVE, C_STORE};
@@ -325,5 +329,63 @@ impl<A> ReceiveMessage for Association<A> where A:ReceivePdu {
 				lazy_attachment_to_string(att).map(|s|trace!(s));
 				m
 			}).with_whatever_context(|e|format!("Failed getting message from {} ({e})", self.peer_address()))
+	}
+}
+
+impl<T> ReceivePdu for Option<T> where T:AsyncAssociation<tokio::net::TcpStream> + Send + 'static
+{
+	async fn read_pdu(&mut self) -> Result<Pdu> {
+		match self {
+			None => panic!("trying to use a checked out connection"),
+			Some(s) => AsyncAssociation::receive(s).await.map_err(|e|e.into()),
+		}
+	}
+
+	async fn read_pipe(&mut self, prelude: Vec<u8>, ts: &TransferSyntax) -> Result<InMemDicomObject>
+	{
+		let mut checkout = self.take().expect("trying to check out already checked out connection");
+		let ts = ts.uid();
+
+		let (o,checkout) = spawn_blocking(move || {
+			let source = SyncIoBridge::new(checkout.receive_pdata());
+			let source = Read::chain(Cursor::new(prelude), source);
+			InMemDicomObject::read_dataset_with_ts(source,TransferSyntaxRegistry::default().get(ts).unwrap())
+				.map(|o|(o,checkout))
+		}).await??;
+		self.replace(checkout);
+		Ok(o)
+	}
+}
+
+impl<T> SendPdu for Option<T>  where T:AsyncAssociation<tokio::net::TcpStream> + Send + 'static {
+	async fn send_obj(&mut self, pc_id: u8, ts: &TransferSyntax, o: InMemDicomObject) -> Result<()> {
+		// check out the association
+		let mut checkout = self.take().expect("trying to check out already checked out connection");
+		let ts = ts.uid();
+
+		let checkout = spawn_blocking(move || {
+			let mut sink = SyncIoBridge::new(checkout.send_pdata(pc_id));
+			let r = o.write_dataset_with_ts(&mut sink, TransferSyntaxRegistry::default().get(ts).unwrap())
+				.with_whatever_context::<_,_,DimseError>(|e|format!("Failed sending object: {e}"));
+			drop(sink);
+			r.map(|_|checkout)
+		}).await??;
+		self.replace(checkout);
+		Ok(())
+	}
+
+	async fn send_pdu(&mut self, pdu: &Pdu) -> Result<()> {
+		match self {
+			Some(a) => AsyncAssociation::send(a,pdu).await.map_err(|e|e.into()),
+			None => panic!("trying to write into checked out connection")
+		}
+	}
+
+	fn get_sink(&mut self, pc_id: u8) -> Result<crate::association::Sink<'_>> {
+		let sink = match self {
+			None => panic!("trying to use a checked out connection"),
+			Some(s) => Box::new(s.send_pdata(pc_id)),
+		};
+		Ok(Sink::Async(sink))
 	}
 }

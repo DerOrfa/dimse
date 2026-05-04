@@ -7,7 +7,7 @@ use dimse::association::SendPayload;
 use dimse::client::Client;
 use dimse::definitions::RequestCode::C_MOVE;
 use dimse::error::Result;
-use dimse::pending_receive::PendingStore;
+use dimse::pending_receive::{PendingReceive, PendingStore};
 use dimse::{RetrieveLevel, Taker};
 use futures::TryStreamExt;
 use std::collections::HashMap;
@@ -32,7 +32,7 @@ async fn test_move() -> Result<()>
 	let (empty_srv, watcher1,_) = common::init_server("EMPTY",[] , empty.clone()).await?;
 	let (filled_srv, watcher2,_) = common::init_server("FILLED",[FullAeAddr::new("EMPTY",empty_srv)] , filled.clone()).await?;
 
-	let mut client = Client::new(filled_srv.into(),Some("TESTSCU"), [uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE])?;
+	let mut client = Client::new(filled_srv.into(),Some("TESTSCU"), [uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE]).await?;
 
 	let req= client.new_request(C_MOVE, uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE ,vec![
 		InMemElement::new(tags::MOVE_DESTINATION, VR::AE, "EMPTY")
@@ -42,7 +42,8 @@ async fn test_move() -> Result<()>
 			InMemElement::new(tags::SERIES_INSTANCE_UID, VR::UI, series_uid),
 		]);
 	client.send_request(req).await?;
-	let response:Vec<_> = PendingStore::new(&mut client, C_MOVE).try_collect().await?;
+	let response:Vec<_> = PendingReceive::new(&mut client, C_MOVE).try_collect().await?;
+
 	dbg!(response);
 	drop(watcher1);
 	drop(watcher2);

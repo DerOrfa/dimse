@@ -13,7 +13,7 @@ async fn test_echo() -> Result<()>
 
 	assert!(!handle.is_finished()); // should not be finished
 
-	let mut client = dimse::client::Client::new(addr.into(),Some("TEST_CLIENT"), [VERIFICATION])?;
+	let mut client = dimse::client::Client::new(addr.into(),Some("TEST_CLIENT"), [VERIFICATION]).await?;
 
 	let req = client.new_request(C_ECHO,VERIFICATION, vec![])?;
 	client.send_request(req).await?;

@@ -26,7 +26,7 @@ async fn test_get() -> Result<()>
 
 	let (addr, watcher,_) = common::init_server("TEST_SCP",[] , access.clone()).await?;
 
-	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::ENHANCED_MR_IMAGE_STORAGE])?;
+	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::ENHANCED_MR_IMAGE_STORAGE]).await?;
 
 	let req = client.get_file(uid).await?;
 
@@ -64,7 +64,7 @@ async fn test_get_many() -> Result<()>
 
 	let (addr, watcher,_) = common::init_server("TEST_SCP",[] , access.clone()).await?;
 
-	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::ENHANCED_MR_IMAGE_STORAGE])?;
+	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::ENHANCED_MR_IMAGE_STORAGE]).await?;
 
 	let req= client.new_request(C_GET, uids::ENHANCED_MR_IMAGE_STORAGE ,vec![])?
 		.with_identifier([

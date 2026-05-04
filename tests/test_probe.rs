@@ -11,7 +11,7 @@ async fn test_server_probe() -> Result<()>
 
 	assert!(!handle.is_finished()); // should not be finished
 
-	let probes = dimse::client::Client::probe(addr.into(),Some("TEST_CLIENT"))?;
+	let probes = dimse::client::Client::probe(addr.into(),Some("TEST_CLIENT")).await?;
 
 	assert!(!probes.is_empty());
 	drop(watcher);

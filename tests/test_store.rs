@@ -25,7 +25,7 @@ async fn test_store() -> Result<()>
 
 	let (addr, watcher,_) = common::init_server("TEST_SCP",[] , access.clone()).await?;
 
-	let mut client = Client::new(addr.into(),Some("TESTSCU"), [ENHANCED_MR_IMAGE_STORAGE])?;
+	let mut client = Client::new(addr.into(),Some("TESTSCU"), [ENHANCED_MR_IMAGE_STORAGE]).await?;
 
 	client.store_file(&path,[]).await?;
 	let stored_path = access.get_path(&uid).await?;

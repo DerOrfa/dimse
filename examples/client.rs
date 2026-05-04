@@ -7,7 +7,7 @@ use std::process::exit;
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::{info, error, Level};
-use dimse::client::Client;
+use dimse::client::{Client, ClientAssociation};
 use clap::builder::{PossibleValue};
 use clap::{Parser, Subcommand, ValueEnum};
 use dicom::core::{PrimitiveValue, VR};
@@ -112,12 +112,13 @@ pub enum Commands
 	Probe {}
 }
 
-fn connect(addr:AeAddr<SocketAddr>, calling_ae:Option<String>) -> dimse::error::Result<(Association<Client>,ProgressBar)>
+async fn connect(addr:AeAddr<SocketAddr>, calling_ae:Option<String>) -> dimse::error::Result<(ClientAssociation,ProgressBar)>
 {
 	let sp = ProgressBar::new_spinner();
 	sp.enable_steady_tick(Duration::from_millis(500));
 	sp.set_message(format!("Connecting to {}", addr));
-	Client::new(addr, calling_ae, vec![]).map(|c|(c,sp))
+	Client::new(addr, calling_ae, vec![]).await
+		.map(|c|(c,sp))
 }
 
 #[tokio::main]
@@ -129,7 +130,7 @@ async fn main() -> dimse::error::Result<()>
 	tracing_subscriber::fmt().with_max_level(cli.log_level.0).init();
 	match cli.command {
 		Commands::FindStudy { name } => {
-			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
+			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
 			sp.set_message(format!(r#"Looking up "{}""#, name));
 			let found:Vec<_> =client.find(RetrieveLevel::STUDY, [
 				InMemElement::new(tags::PATIENT_NAME, VR::PN, name),
@@ -174,7 +175,7 @@ async fn main() -> dimse::error::Result<()>
 			}
 		}
 		Commands::ListInstances { uid } => {
-			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
+			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
 			sp.set_message(format!(r#"Looking up "{}""#, uid));
 			let mut instances = vec![];
 			let mut found =client.find(RetrieveLevel::IMAGE,[
@@ -221,7 +222,7 @@ async fn main() -> dimse::error::Result<()>
 			}
 		}
 		Commands::Move {uid,aet} => {
-			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
+			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
 			sp.finish_and_clear();
 
 			let progress = ProgressBar::no_length();
@@ -237,7 +238,7 @@ async fn main() -> dimse::error::Result<()>
 			progress.finish();
 		}
 		Commands::Store { pattern } => {
-			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
+			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
 			sp.set_message(format!(r#"Storing "{}""#, pattern.join(",")));
 
 			for p in pattern{
@@ -261,7 +262,7 @@ async fn main() -> dimse::error::Result<()>
 				eprintln!("{} is not a directory", out.display());
 				exit(1);
 			}
-			let (mut client, sp) = connect(cli.addr, cli.calling_ae)?;
+			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
 			sp.set_message(format!(r#"Getting study "{}""#, uid));
 			let mut sp = Some(sp);
 			let req= client.new_request(C_GET, uids::ENHANCED_MR_IMAGE_STORAGE ,vec![])?
@@ -297,7 +298,7 @@ async fn main() -> dimse::error::Result<()>
 			let sp = ProgressBar::new_spinner();
 			sp.enable_steady_tick(Duration::from_millis(500));
 			sp.set_message(format!("Probing {}", cli.addr));
-			for c in Client::probe(cli.addr,cli.calling_ae)?
+			for c in Client::probe(cli.addr,cli.calling_ae).await?
 			{
 				let entry = StandardSopClassDictionary::default().by_uid(&c.abstract_syntax)
 					.map_or((false,"<unknown>"),|a|(a.retired,a.name));

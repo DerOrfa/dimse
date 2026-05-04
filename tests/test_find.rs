@@ -31,7 +31,7 @@ async fn test_find() -> Result<()>
 
 	let (addr, watcher,_) = common::init_server("TEST_SCP",[] , access.clone()).await?;
 
-	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND])?;
+	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND]).await?;
 
 	let found:Vec<_> = client.find(RetrieveLevel::IMAGE,[
 		InMemElement::new(tags::PATIENT_NAME, VR::PN, "Finder*"),

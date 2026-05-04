@@ -16,7 +16,7 @@ use dicom::dicom_value;
 use dicom::object::mem::InMemElement;
 use dicom_ul::association::Error::ConnectionClosed;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::task::{spawn_blocking, JoinSet};
+use tokio::task::JoinSet;
 use tracing::{debug, error};
 use crate::error::DimseError::UnsupportedPC;
 use crate::io::FileAccess;
@@ -154,12 +154,9 @@ impl<B> Task<B> where B:FileAccess
 						panic!("Wont talk to myself");
 					}
 					let destination_clone = destination.clone();
-					let mut client =
-						spawn_blocking(move||{
-							Client::new(destination_clone.clone(), Some(local_ae), [])
+					let mut client = Client::new(destination_clone.clone(), Some(local_ae), []).await
 							.map_err(|e|failure(FailureCode::Failure)
-								.comment(format!("Failed to contact {destination_clone} ({e})")))
-						}).await.unwrap()?;
+								.comment(format!("Failed to contact {destination_clone} ({e})")))?;
 					while let Some(instance) = instances.next().await {
 						debug!("Sending {} to {destination}",self.backend.get_uid(&instance).await?);
 						let attr= [
