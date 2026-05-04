@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::association::{Association,ReceiveMessage, SendPayload};
+use crate::association::{Association, ReceiveMessage, Release, SendPayload};
 use crate::context::Context;
 use crate::definitions::{FailureCode, RequestCode};
 use crate::msg::{MessageType, Request, Response};
@@ -185,6 +185,7 @@ impl<B> Task<B> where B:FileAccess
 						let resp = request.make_response(pend.clone());
 						self.assoc.send_payload(resp.try_into()?).await?;
 					}
+					client.release().await?;
 					Ok(ok_response)
 				} else { Err(failure(FailureCode::InvalidArgument)) }
 			}

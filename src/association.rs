@@ -381,11 +381,22 @@ impl<T> SendPdu for Option<T>  where T:AsyncAssociation<tokio::net::TcpStream> +
 		}
 	}
 
-	fn get_sink(&mut self, pc_id: u8) -> Result<crate::association::Sink<'_>> {
+	fn get_sink(&mut self, pc_id: u8) -> Result<Sink<'_>> {
 		let sink = match self {
 			None => panic!("trying to use a checked out connection"),
 			Some(s) => Box::new(s.send_pdata(pc_id)),
 		};
 		Ok(Sink::Async(sink))
+	}
+}
+
+pub trait Release{
+	async fn release(self) -> Result<()>;
+}
+
+impl<T> Release for Association<Option<T>>  where T:AsyncAssociation<tokio::net::TcpStream> + Send + 'static {
+	async fn release(mut self) -> Result<()> {
+		let assoc = self.inner.take().expect("trying to release already checked out connection");
+		assoc.release().await.map_err(|e|e.into())
 	}
 }

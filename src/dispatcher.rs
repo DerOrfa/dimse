@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::task::{JoinSet};
 use tracing::{debug, error, info, trace, warn};
-use crate::association::SendPayload;
+use crate::association::{Release, SendPayload};
 use crate::error::DimseError::UnexpectedResponse;
 use crate::io::FileAccess;
 use crate::lazy_attachment_to_string;
@@ -188,6 +188,7 @@ impl<B> Dispatcher<B> where B:FileAccess
 			if let OpenState::Closed = self.state {break}
 		}
 		info!("association {} => {} is closed", self.ass.peer_address(), self.ass.local_address());
+		self.ass.release().await?;
 		Ok(())
 	}
 

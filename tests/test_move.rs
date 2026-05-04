@@ -11,6 +11,11 @@ use dimse::pending_receive::PendingReceive;
 use dimse::{RetrieveLevel, Taker};
 use futures::TryStreamExt;
 use std::collections::HashMap;
+use dicom::core::header::Header;
+use dicom::object::open_file;
+use tracing::error;
+use dimse::io::FileAccess;
+use crate::common::dcm::{diff, tagname};
 
 mod common;
 
@@ -18,7 +23,7 @@ mod common;
 #[snafu::report]
 async fn test_move() -> Result<()>
 {
-	tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
+	//tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
 
 	let series = dcm::synthesize_series(&dcm::UidSynthesizer::default(),1,1,10);
 	let series_uid:String = Taker::get(series.first().expect("Series must not be empty"), tags::SERIES_INSTANCE_UID)?;
@@ -43,8 +48,24 @@ async fn test_move() -> Result<()>
 		]);
 	client.send_request(req).await?;
 	let response:Vec<_> = PendingReceive::new(&mut client, C_MOVE).try_collect().await?;
+	assert_eq!(response.len(),10);
 
-	dbg!(response);
+	for (uid,source) in series{
+		let dest=empty.get_path(&uid).await?;
+		let dest = open_file(dest)?;
+		for d in diff(source.into_inner(),dest.into_inner()) {
+			match d
+			{
+				(Some(e1),Some(e2)) =>
+					error!("Sent {} differs from the reply: {:?}//{:?}",tagname(e1.tag()),e1.value(),e2.value()),
+				(Some(e1),None) =>
+					error!("Sent {} is missing in the reply", tagname(e1.tag())),
+				_ =>
+					error!("Unexpected {:?}//{:?}",d.0,d.1),
+			}
+		}
+	}
+
 	drop(watcher1);
 	drop(watcher2);
 	Ok(())

@@ -24,7 +24,7 @@ use dimse::error::DimseError;
 use snafu::prelude::*;
 use dimse::{RetrieveLevel, Taker};
 use indicatif::{ProgressBar, ProgressStyle};
-use dimse::association::{Association, SendPayload};
+use dimse::association::{Association, Release, SendPayload};
 use dimse::definitions::RequestCode::C_GET;
 use dimse::pending_receive::PendingStore;
 
@@ -235,7 +235,9 @@ async fn main() -> dimse::error::Result<()>
 					progress.set_length(progress.position() + s as u64)
 				}
 			}
+			drop(mover);
 			progress.finish();
+			client.release().await?;
 		}
 		Commands::Store { pattern } => {
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
@@ -255,7 +257,7 @@ async fn main() -> dimse::error::Result<()>
 					info!("Stored file {}", file.display());
 				}
 			}
-
+			client.release().await?;
 		}
 		Commands::GetStudy { uid, out } => {
 			if !out.is_dir(){
@@ -287,7 +289,8 @@ async fn main() -> dimse::error::Result<()>
 				let modality = e.element(tags::MODALITY)?.to_str().unwrap();
 				e.write_all(File::create(out.join(format!("{modality}.{uid}.dcm")))?)?;
 			}
-
+			drop(response);
+			client.release().await?;
 		}
 		Commands::Probe { } => {
 			let mut table = Table::new();
