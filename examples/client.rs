@@ -87,7 +87,11 @@ pub enum Commands
 	/// finding an instance on the server
 	FindStudy {
 		/// subject name to search for ("*" will list all studies)
-		name:String
+		#[arg(default_value = "*")]
+		name:String,
+		/// date as string YYYYMMDD or *
+		#[arg(default_value = "*")]
+		date:String
 	},
 	Move {
 		/// UID of the study
@@ -129,13 +133,13 @@ async fn main() -> dimse::error::Result<()>
 
 	tracing_subscriber::fmt().with_max_level(cli.log_level.0).init();
 	match cli.command {
-		Commands::FindStudy { name } => {
+		Commands::FindStudy { name, date } => {
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
-			sp.set_message(format!(r#"Looking up "{}""#, name));
+			sp.set_message(format!(r#"Looking up "{name}" from {date}"#));
 			let found:Vec<_> =client.find(RetrieveLevel::STUDY, [
 				InMemElement::new(tags::PATIENT_NAME, VR::PN, name),
 				InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
-				InMemElement::new(tags::STUDY_DATE, VR::DA, PrimitiveValue::Empty),
+				InMemElement::new(tags::STUDY_DATE, VR::DA, date),
 				InMemElement::new(tags::STUDY_TIME, VR::TM, PrimitiveValue::Empty),
 			]).await?.try_collect().await?;
 
