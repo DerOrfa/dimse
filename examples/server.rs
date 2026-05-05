@@ -50,15 +50,15 @@ impl ValueEnum for LogLevel
 }
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about="A basic PACS server (SCP)", long_about = None)]
 struct Cli {
 	/// logging level
 	#[arg(long, default_value = Level::INFO.as_str())]
 	log_level:LogLevel,
-	/// address for the PACS to bind to
+	/// Address for the PACS to bind to.
 	#[arg(value_parser = socketaddr_value_parser)]
 	addr:AeAddr<SocketAddr>,
-	/// a (globbing) path for files to serve
+	/// A (globbing) path for files to serve.
 	path:String,
 }
 

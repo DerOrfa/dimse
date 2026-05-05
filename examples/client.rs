@@ -50,15 +50,15 @@ impl ValueEnum for LogLevel
 }
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about="A client tool (SCU) for basic operations on PACS servers (SCP)", long_about = None)]
 struct Cli {
 	/// logging level
 	#[arg(long, default_value = Level::INFO.as_str())]
 	log_level:LogLevel,
-	/// address of the PACS to connect to
+	/// Address of the PACS to connect to (AET@IP:PORT).
 	#[arg(value_parser = socketaddr_value_parser)]
 	addr:AeAddr<SocketAddr>,
-	/// the calling AE title, default is ANY-SCU
+	/// The calling AE title, default is ANY-SCU.
 	#[arg(long)]
 	calling_ae:Option<String>,
 	#[command(subcommand)]
@@ -84,7 +84,7 @@ pub(crate) fn socketaddr_value_parser(value: &str) -> Result<AeAddr<SocketAddr>,
 #[derive(Subcommand)]
 pub enum Commands
 {
-	/// finding an instance on the server
+	/// Find a measurement on the PACS.
 	FindStudy {
 		/// subject name to search for ("*" will list all studies)
 		#[arg(default_value = "*")]
@@ -93,23 +93,28 @@ pub enum Commands
 		#[arg(default_value = "*")]
 		date:String
 	},
+	/// Move a measurement to another PACS.
 	Move {
 		/// UID of the study
 		uid:String,
+		/// AET of the PACS to send to (must be known by the peer)
 		aet:String,
 	},
+	/// List all instances in a measurement.
 	ListInstances {
 		/// UID of the study
 		uid:String
 	},
-	/// store one or more DICOM files
+	/// Store one or more DICOM files.
 	Store {
 		/// glob or single file dicom file to upload
 		pattern:Vec<String>
 	},
+	/// Download all instances of a measurement.
 	GetStudy {
-		/// glob or single file dicom file to upload
+		/// UID of the measurement (use find-study to get that)
 		uid:String,
+		/// Output path to store the files (must exist)
 		out:PathBuf
 	},
 	/// Probing which abstract syntaxes the server supports
