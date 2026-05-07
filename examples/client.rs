@@ -88,9 +88,8 @@ pub enum Commands
 		/// subject name to search for ("*" will list all studies)
 		#[arg(default_value = "*")]
 		name:String,
-		/// date as string YYYYMMDD or *
-		#[arg(default_value = "*")]
-		date:String
+		/// date as string YYYYMMDD
+		date:Option<String>
 	},
 	/// Move a measurement to another PACS.
 	Move {
@@ -165,11 +164,17 @@ async fn main() -> dimse::error::Result<()>
 	match cli.command {
 		Commands::FindStudy { name, date } => {
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
-			sp.set_message(format!(r#"Looking up "{name}" from {date}"#));
+			let date = if let Some(date) = date{
+				sp.set_message(format!(r#"Looking up "{name}" from {date}"#));
+				InMemElement::new(tags::STUDY_DATE, VR::DA, date)
+			} else {
+				sp.set_message(format!(r#"Looking up "{name}""#));
+				InMemElement::new(tags::STUDY_DATE, VR::DA, PrimitiveValue::Empty)
+			};
 			let found:Vec<_> =client.find(RetrieveLevel::STUDY, [
 				InMemElement::new(tags::PATIENT_NAME, VR::PN, name),
 				InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
-				InMemElement::new(tags::STUDY_DATE, VR::DA, date),
+				date,
 				InMemElement::new(tags::STUDY_TIME, VR::TM, PrimitiveValue::Empty),
 			]).await?.try_collect().await?;
 

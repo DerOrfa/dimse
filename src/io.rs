@@ -19,11 +19,25 @@ pub type ItemResult<I> = Result<I,StatusFailure>;
 pub trait FileAccess: Clone + Send + Sync
 {
 	type Item:Send + Sync;
-	fn get_uid(&self, uid:&Self::Item) -> impl Future<Output = Result<String, StatusFailure>> + Send;
-	fn get_path(&self, uid:&Self::Item) -> impl Future<Output = Result<PathBuf, StatusFailure>> + Send;
+	/// return the *InstanceUID of the item
+	fn get_uid(&self, itm:&Self::Item) -> impl Future<Output = Result<String, StatusFailure>> + Send;
+	/// return the filepath of the item
+	///
+	/// Those are filenames for images and paths for everything else
+	fn get_path(&self, itm:&Self::Item) -> impl Future<Output = Result<PathBuf, StatusFailure>> + Send;
+	/// store an image object
 	fn store_file(&mut self, file:FileDicomObject<InMemDicomObject>) -> impl Future<Output = Status> + Send;
+	/// look up an item
+	///
+	/// `ident` is expected to be an identifier as described for the relative operation
+	/// Only unique descriptors or empty elements are allowed.
+	/// Use `find` for searches with wildcards
 	fn lookup<'a>(&self, ident: impl Into<Identifier> + Send)
 		-> impl Future<Output = Result<BoxStream<'a,Self::Item>, StatusFailure>> + Send;
+	/// find items
+	///
+	/// `ident` is expected to be an identifier as described for the relative operation
+	/// Wildcards should be handled as expected
 	fn find<'a>(&self, ident: impl Into<Identifier> + Send)
 		-> impl Future<Output = Result<BoxStream<'a,ItemResult<InMemDicomObject>>, StatusFailure>> + Send;
 }

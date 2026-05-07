@@ -9,6 +9,7 @@
 The Query/Retrieve Information Model is identified by the SOP Class negotiated at Association establishment time. The SOP Class is composed of both an Information Model and a DIMSE-C Service Group.
 - This SOP Class identifies the class of the Query/Retrieve Information Model (i.e., not the SOP Class of the stored SOP Instances for which the SCP has information).
 - [Matching](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.2.2.2.html)
+- [Standard Query/Retrieve Information Models](https://dicom.nema.org/dicom/2013/Output/chtml/part04/sect_c.3.html)
 
 ## Command Fields
 https://dicom.nema.org/dicom/2013/output/chtml/part07/chapter_E.html
