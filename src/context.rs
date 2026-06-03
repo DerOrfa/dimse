@@ -28,15 +28,14 @@ impl Context
 		let ts = &self.select_pc(pc_id).transfer_syntax;
 		self.reg.get(ts).ok_or(TransferSyntaxNotFound{ts:ts.clone()})
 	}
-	pub(crate) fn find_pc(&self, uid:impl ToString) -> Result<&PresentationContextNegotiated>
+	pub(crate) fn find_pc(&self, uid: impl AsRef<str>) -> Result<&PresentationContextNegotiated>
 	{
-		let uid = uid.to_string();
-		match self.pcs.iter().find(|(_,ctx)|ctx.abstract_syntax == uid)
+		match self.pcs.iter().find(|(_,ctx)|ctx.abstract_syntax == uid.as_ref())
 		{
 			None => {
-				let name = StandardSopClassDictionary::default().by_uid(&uid)
+				let name = StandardSopClassDictionary::default().by_uid(uid.as_ref())
 					.map_or("<unknown>",|a|a.name);
-				Err(UnsupportedPC {uid,name:name.to_string()})
+				Err(UnsupportedPC {uid:uid.as_ref().to_string(),name:name.to_string()})
 			}
 			Some((_,pc)) => Ok(pc)
 		}

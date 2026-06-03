@@ -159,8 +159,8 @@ impl<A> Association<A>
 			}
 		}
 	}
-	pub fn new_request(&self, command: RequestCode, sop_class:impl ToString, attr: impl IntoIterator<Item=InMemElement>)
-		-> Result<Request> where Self: SendPayload
+	pub fn new_request(&self, command: RequestCode, sop_class: impl AsRef<str>, attr: impl IntoIterator<Item=InMemElement>)
+	                   -> Result<Request> where Self: SendPayload
 	{
 		self.context.find_pc(sop_class)
 			.map(|ctx|Request::new(command, ctx, attr))
@@ -219,12 +219,12 @@ impl<A> Association<A>
 			}
 		}
 	}
-	pub async fn get_file(&mut self, uid:impl AsRef<str>) -> Result<FileDicomObject<InMemDicomObject>>
+	pub async fn get_file(&mut self, uid:impl AsRef<str>, sop_class: impl AsRef<str>) -> Result<FileDicomObject<InMemDicomObject>>
 		where Self:SendPayload, Self:ReceiveMessage
 	{
 		// send request
 		// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.3.html#sect_C.4.3.1
-		let req= self.new_request(C_GET, uids::ENHANCED_MR_IMAGE_STORAGE ,vec![])?
+		let req= self.new_request(C_GET, sop_class ,vec![])?
 			.with_identifier([
 				InMemElement::new(tags::QUERY_RETRIEVE_LEVEL,VR::CS,RetrieveLevel::IMAGE.as_ref()),
 				InMemElement::new(tags::SOP_INSTANCE_UID, VR::UI, uid.as_ref()),

@@ -28,7 +28,7 @@ async fn test_get() -> Result<()>
 
 	let mut client = Client::new(addr.into(),Some("TESTSCU"), [uids::ENHANCED_MR_IMAGE_STORAGE]).await?;
 
-	let req = client.get_file(uid).await?;
+	let req = client.get_file(uid, uids::ENHANCED_MR_IMAGE_STORAGE).await?;
 
 	let d = diff(obj.into_inner(),req.into_inner());
 	for d in d.iter() {

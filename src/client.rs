@@ -15,7 +15,6 @@ impl Client {
 	pub async fn new<S>(addr: AeAddr<SocketAddr>, calling_ae:Option<S>, abstract_syntaxes:impl IntoIterator<Item=&'static str>)
 		-> Result<ClientAssociation> where S:AsRef<str>
 	{
-		debug!("Connecting to {addr}");
 		let calling_ae = calling_ae.as_ref().map(AsRef::as_ref);
 		let mut inner = Self::new_inner(&addr,abstract_syntaxes,calling_ae).await?;
 
