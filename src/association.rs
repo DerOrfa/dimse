@@ -9,7 +9,7 @@ use crate::error::DimseError::{UnexpectedEmptyMsg, UnexpectedMessageType, Unexpe
 use crate::error::{DimseError, Result};
 use crate::msg::{MessageType, Request};
 use crate::payload::{Attachment, Payload};
-use crate::pending_receive::PendingReceive;
+use crate::pending_receive::{PendingGet, PendingReceive};
 use dicom::core::{PrimitiveValue, VR};
 use dicom::encoding::{TransferSyntax};
 use dicom::object::{FileDicomObject, InMemDicomObject};
@@ -26,7 +26,7 @@ use dicom_dictionary_std::tags;
 use dicom_dictionary_std::uids;
 use dicom_ul::association::AsyncAssociation;
 use futures::StreamExt;
-use futures::stream::FusedStream;
+use futures::stream::{Fuse, FusedStream};
 use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tokio::task::spawn_blocking;
 use tokio_util::io::SyncIoBridge;
@@ -218,6 +218,32 @@ impl<A> Association<A>
 						format!("Failure reading result of store request: {e}"))?
 			}
 		}
+	}
+	
+	pub async fn get<'a>(&'a mut self, request_uid:impl AsRef<str>, level:RetrieveLevel) -> Result<Fuse<PendingGet<'a, A>>> where Self: ReceiveMessage + SendPayload + Unpin {
+		let request_tag = match level {
+			RetrieveLevel::PATIENT => todo!(),
+			RetrieveLevel::STUDY => tags::STUDY_INSTANCE_UID,
+			RetrieveLevel::SERIES => tags::SERIES_INSTANCE_UID,
+			RetrieveLevel::IMAGE => {
+				panic!("Use get_file instead")
+			}
+		};		
+		debug!("Searching for images to get");
+		let mut requests = vec![];
+		let mut found =self.find(RetrieveLevel::IMAGE, [
+			InMemElement::new(request_tag, VR::UI, request_uid.as_ref()),
+			InMemElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::Empty),
+			InMemElement::new(tags::SOP_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
+		]).await?;
+		while let Some(mut obj) = found.next().await.transpose()? {
+			let uid:Result<String> = Taker::take(&mut obj, tags::SOP_INSTANCE_UID);
+			let sop_class:Result<String> = Taker::take(&mut obj, tags::SOP_CLASS_UID);
+			requests.push((uid?,sop_class?));
+		}
+		drop(found);
+
+		PendingGet::new(self, requests)
 	}
 	pub async fn get_file(&mut self, uid:impl AsRef<str>, sop_class: impl AsRef<str>) -> Result<FileDicomObject<InMemDicomObject>>
 		where Self:SendPayload, Self:ReceiveMessage

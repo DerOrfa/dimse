@@ -276,13 +276,7 @@ async fn main() -> dimse::error::Result<()>
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
 			sp.set_message(format!(r#"Getting study "{}""#, uid));
 			let mut sp = Some(sp);
-			let req= client.new_request(C_GET, uids::ENHANCED_MR_IMAGE_STORAGE ,vec![])?
-				.with_identifier([
-					InMemElement::new(tags::QUERY_RETRIEVE_LEVEL,VR::CS,RetrieveLevel::STUDY.as_ref()),
-					InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, uid),
-				]);
-			client.send_request(req).await?;
-			let mut response = PendingStore::new(&mut client, C_GET);
+			let mut response= client.get(uid,RetrieveLevel::STUDY).await?;
 
 			let mut progress = None;
 			while let Some(e) = response.next().await.transpose()?{

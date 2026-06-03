@@ -1,27 +1,29 @@
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
+use dicom::core::{PrimitiveValue, VR};
 use dicom::object::{FileDicomObject, InMemDicomObject};
+use dicom::object::mem::InMemElement;
 use dicom_dictionary_std::tags;
 use crate::association::{Association, ReceiveMessage, SendPayload};
 use crate::error::{DimseError, Result};
-use futures::{FutureExt, Stream};
-use futures::stream::FusedStream;
+use futures::{FutureExt, Stream, StreamExt};
+use futures::stream::{Fuse, FusedStream};
 use snafu::ResultExt;
 use tracing::{debug, error, trace, warn};
 use crate::error::DimseError::UnexpectedMessage;
 use crate::msg::{MessageType, Response};
 use crate::payload::Payload;
-use crate::{io, Taker};
+use crate::{io, RetrieveLevel, Taker};
 use crate::definitions::RequestCode;
 use crate::status::{success, StatusOk, StatusPending};
 
 #[derive(Default)]
-enum PendingState<'a,A>
+enum PendingState<'a,A, R = MessageType>
 {
 	#[default]
 	None,
 	Free(&'a mut Association<A>),
-	PendingReceive(Pin<Box<dyn Future<Output=(Result<MessageType>, &'a mut Association<A>)>+'a>>),
+	PendingReceive(Pin<Box<dyn Future<Output=(Result<R>, &'a mut Association<A>)>+'a>>),
 	PendingSend(Pin<Box<dyn Future<Output=(Result<()>, &'a mut Association<A>)>+'a>>)
 }
 pub struct PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin {
@@ -32,20 +34,6 @@ pub struct PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin {
 	pub to_do:Option<u16>,
 	terminated:bool,
 	state:PendingState<'a,A>
-}
-
-pub struct PendingStore<'a,A> where Association<A>:ReceiveMessage + Unpin
-{
-	inner:PendingReceive<'a,A>,
-	store:Option<FileDicomObject<InMemDicomObject>>
-}
-
-impl<'a, A> PendingStore<'a, A> where Association<A>: ReceiveMessage + Unpin
-{
-	pub fn new(ass: &'a mut Association<A>, request_code: RequestCode) -> Self {
-		let inner = PendingReceive::new(ass,request_code);
-		Self{inner,	store: None}
-	}
 }
 
 impl<'a,A> PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin
@@ -136,7 +124,22 @@ impl<'a,A> Stream for PendingReceive<'a,A> where Association<A>:ReceiveMessage +
 	}
 }
 
-impl<'a,A> PendingStore<'a,A> where Association<A>:ReceiveMessage + SendPayload + Unpin + 'a {
+pub struct PendingStore<'a,A> where Association<A>:ReceiveMessage + Unpin
+{
+	inner:PendingReceive<'a,A>,
+	store:Option<FileDicomObject<InMemDicomObject>>
+}
+
+impl<'a, A> PendingStore<'a, A> where Association<A>: ReceiveMessage + Unpin
+{
+	pub fn new(ass: &'a mut Association<A>, request_code: RequestCode) -> Self {
+		let inner = PendingReceive::new(ass,request_code);
+		Self{inner,	store: None}
+	}
+}
+
+impl<'a,A> PendingStore<'a,A> where Association<A>:ReceiveMessage + SendPayload + Unpin + 'a
+{
 	fn poll_send(&mut self, payload: Option<Payload>, cx: &mut Context<'_>) -> Poll<Result<()>> {
 		// take out state to make a poll or repoll
 		let mut p = match std::mem::take(&mut self.inner.state) {
@@ -164,7 +167,8 @@ impl<'a,A> PendingStore<'a,A> where Association<A>:ReceiveMessage + SendPayload 
 
 }
 
-impl<'a, A> Stream for PendingStore<'a, A> where Association<A>:ReceiveMessage + SendPayload + Unpin + 'a {
+impl<'a, A> Stream for PendingStore<'a, A> where Association<A>:ReceiveMessage + SendPayload + Unpin + 'a
+{
 	type Item = Result<FileDicomObject<InMemDicomObject>>;
 
 	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>>
@@ -218,6 +222,56 @@ impl<'a, A> Stream for PendingStore<'a, A> where Association<A>:ReceiveMessage +
 		self.inner.size_hint()
 	}
 }
+
+pub struct PendingGet<'a,A> where Association<A>:ReceiveMessage + Unpin {
+	requests:Vec<(String,String)>,
+	state:PendingState<'a,A, FileDicomObject<InMemDicomObject>>,
+}
+
+impl<'a,A> PendingGet<'a,A> where Association<A>: ReceiveMessage + SendPayload + Unpin + 'a
+{
+	pub fn new(ass: &'a mut Association<A>, requests: Vec<(String,String)>) -> Result<Fuse<Self>> {
+		Ok(Self{requests,state:PendingState::Free(ass)}.fuse())
+	}
+	fn poll_get(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<FileDicomObject<InMemDicomObject>>>> {
+		let mut p = match std::mem::take(&mut self.state) {
+			PendingState::Free(ass) => {
+				if let Some((uid,sop)) = self.requests.pop(){
+					Box::pin(async { // take association and wrap it in async block receiving the message
+						let msg = ass.get_file(uid,sop).await;
+						(msg,ass)
+					})
+				} else {
+					return Poll::Ready(None)
+				}
+			}
+			PendingState::PendingReceive(p) => p,
+			_ => {panic!("message pending in invalid state")}
+		};
+		match p.poll_unpin(cx){
+			Poll::Pending => {
+				self.state = PendingState::PendingReceive(p);
+				Poll::Pending
+			},
+			Poll::Ready((r,a)) => { // we got our result, go back to Free
+				self.state = PendingState::Free(a);
+				Poll::Ready(Some(r))
+			}
+		}
+	}
+}
+impl<'a, A> Stream for PendingGet<'a, A> where Association<A>:ReceiveMessage + SendPayload + Unpin + 'a {
+	type Item = Result<FileDicomObject<InMemDicomObject>>;
+
+	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		let this = self.get_mut();
+		Poll::Ready(ready!(this.poll_get(cx)))
+	}
+	fn size_hint(&self) -> (usize, Option<usize>) {
+		(0,Some(self.requests.len()))
+	}
+}
+
 impl<A> FusedStream for PendingReceive<'_, A>  where Association<A>:ReceiveMessage + Unpin
 {
 	fn is_terminated(&self) -> bool{self.terminated}
