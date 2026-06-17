@@ -13,7 +13,7 @@ pub enum DimseError {
 		#[snafu(source(from(Box<dyn std::error::Error + Send + Sync>, Some)))]
 		source: Option<Box<dyn std::error::Error + Send + Sync>>,
 	},
-	#[snafu(display("Expected data, but got {actual:?}"))]
+	#[snafu(display("Expected pdu data, but got {actual:?}"))]
 	UnexpectedNonDataPdu{actual:Pdu},
 	#[snafu(display("Unknown transfer syntax: {ts}"))]
 	TransferSyntaxNotFound{ts:String},

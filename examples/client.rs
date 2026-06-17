@@ -6,13 +6,13 @@ use std::path::PathBuf;
 use std::process::exit;
 use std::str::FromStr;
 use std::time::Duration;
-use tracing::{info, error, Level};
+use tracing::{info, error, Level, debug};
 use dimse::client::{Client, ClientAssociation};
 use clap::builder::{PossibleValue};
 use clap::{Parser, Subcommand, ValueEnum};
 use dicom::core::{PrimitiveValue, VR};
 use dicom::object::mem::InMemElement;
-use dicom_dictionary_std::{tags, uids, StandardSopClassDictionary};
+use dicom_dictionary_std::{tags, StandardSopClassDictionary};
 use comfy_table::{Cell, ContentArrangement, Table};
 use comfy_table::Attribute::Dim;
 use dicom::core::dictionary::{UidDictionary, UidDictionaryEntry};
@@ -24,9 +24,7 @@ use dimse::error::DimseError;
 use snafu::prelude::*;
 use dimse::{RetrieveLevel, Taker};
 use indicatif::{ProgressBar, ProgressStyle};
-use dimse::association::{Release, SendPayload};
-use dimse::definitions::RequestCode::C_GET;
-use dimse::pending_receive::PendingStore;
+use dimse::association::{Release};
 
 #[derive(Clone)]
 struct LogLevel(Level);
@@ -276,23 +274,41 @@ async fn main() -> dimse::error::Result<()>
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
 			sp.set_message(format!(r#"Getting study "{}""#, uid));
 			let mut sp = Some(sp);
-			let mut response= client.get(uid,RetrieveLevel::STUDY).await?;
+			let found =client.find(RetrieveLevel::SERIES, [
+				InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, uid),
+				InMemElement::new(tags::SERIES_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
+			]).await?
+				.collect::<Vec<_>>().await
+				.into_iter().collect::<Result<Vec<_>,_>>()?;
 
 			let mut progress = None;
-			while let Some(e) = response.next().await.transpose()?{
-				if let Some(len) = response.size_hint().1{
+			for mut d in found {
+				let uid:String = Taker::take(&mut d,tags::SERIES_INSTANCE_UID)?;
+				debug!("Getting series {uid}");
+				let mut stream = client.get_bulk(uid, RetrieveLevel::SERIES).await?;
+				if let Some(first) = stream.next().await.transpose()?{
 					sp.take().map(|sp|sp.finish_and_clear());
-					progress.get_or_insert({
-						let progress = ProgressBar::new(len as u64);
+					let progress = progress.get_or_insert({
+						let progress = ProgressBar::new(0);
 						progress.set_style(ProgressStyle::with_template(["[Downloading {pos}/{len} files to ",out.to_string_lossy().as_ref(),"] {wide_bar} {eta}"].concat().as_str()).unwrap());
 						progress
-					}).inc(1);
+					});
+					if let Some(len) = stream.size_hint().1 {
+						progress.inc_length(len as u64);
+					}
+
+					let uid = first.element(tags::SOP_INSTANCE_UID)?.to_str().unwrap();
+					let modality = first.element(tags::MODALITY)?.to_str().unwrap();
+					first.write_all(File::create(out.join(format!("{modality}.{uid}.dcm")))?)?;
+					progress.inc(1);
+					while let Some(e) = stream.next().await.transpose()? {
+						let uid = first.element(tags::SOP_INSTANCE_UID)?.to_str().unwrap();
+						let modality = first.element(tags::MODALITY)?.to_str().unwrap();
+						e.write_all(File::create(out.join(format!("{modality}.{uid}.dcm")))?)?;
+						progress.inc(1);
+					}
 				}
-				let uid = e.element(tags::SOP_INSTANCE_UID)?.to_str().unwrap();
-				let modality = e.element(tags::MODALITY)?.to_str().unwrap();
-				e.write_all(File::create(out.join(format!("{modality}.{uid}.dcm")))?)?;
 			}
-			drop(response);
 			client.release().await?;
 		}
 		Commands::Probe { } => {

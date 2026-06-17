@@ -9,7 +9,7 @@ use crate::error::DimseError::{UnexpectedEmptyMsg, UnexpectedMessageType, Unexpe
 use crate::error::{DimseError, Result};
 use crate::msg::{MessageType, Request};
 use crate::payload::{Attachment, Payload};
-use crate::pending_receive::{PendingGet, PendingReceive};
+use crate::pending_receive::{PendingGet, PendingReceive, PendingStore};
 use dicom::core::{PrimitiveValue, VR};
 use dicom::encoding::{TransferSyntax};
 use dicom::object::{FileDicomObject, InMemDicomObject};
@@ -22,8 +22,7 @@ use std::ops::DerefMut;
 use std::path::{Path};
 use dicom::object::mem::InMemElement;
 use dicom::transfer_syntax::{TransferSyntaxIndex, TransferSyntaxRegistry};
-use dicom_dictionary_std::tags;
-use dicom_dictionary_std::uids;
+use dicom_dictionary_std::{tags,uids};
 use dicom_ul::association::AsyncAssociation;
 use futures::StreamExt;
 use futures::stream::{Fuse, FusedStream};
@@ -219,8 +218,52 @@ impl<A> Association<A>
 			}
 		}
 	}
-	
-	pub async fn get<'a>(&'a mut self, request_uid:impl AsRef<str>, level:RetrieveLevel) -> Result<Fuse<PendingGet<'a, A>>> where Self: ReceiveMessage + SendPayload + Unpin {
+
+	/// Makes a C-GET call for a higher retrieve level streaming all instances below it
+	pub async fn get_bulk<'a>(&'a mut self, request_uid:impl AsRef<str>, level:RetrieveLevel) -> Result<PendingStore<'a,A>> where Self: ReceiveMessage + SendPayload + Unpin
+	{
+		let request_tag = match level {
+			RetrieveLevel::PATIENT => todo!(),
+			RetrieveLevel::STUDY => tags::STUDY_INSTANCE_UID,
+			RetrieveLevel::SERIES => tags::SERIES_INSTANCE_UID,
+			RetrieveLevel::IMAGE => {
+				panic!("Use get_file instead")
+			}
+		};
+		debug!("Searching for images to get");
+		let mut requests = vec![];
+		let mut sop_class:Option<String> = None;
+		let mut found =self.find(RetrieveLevel::IMAGE, [
+			InMemElement::new(request_tag, VR::UI, request_uid.as_ref()),
+			InMemElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::Empty),
+			InMemElement::new(tags::SOP_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
+		]).await?;
+		while let Some(mut obj) = found.next().await.transpose()? {
+			let uid:String = Taker::take(&mut obj, tags::SOP_INSTANCE_UID)?;
+			let got_sop:String = Taker::take(&mut obj, tags::SOP_CLASS_UID)?;
+			if let Some(set_sop) = &sop_class {
+				if *set_sop != got_sop {
+					warn!("Ignoring conflicting sop class {got_sop} for {uid}, maybe try a lower retrieve level");
+				}
+			} else {
+				sop_class = Some(got_sop);
+			}
+			requests.push(uid);
+		}
+		drop(found);
+
+		let req= self.new_request(C_GET, sop_class.expect("Missing SOP class") ,vec![])?
+			.with_identifier([
+				InMemElement::new(tags::QUERY_RETRIEVE_LEVEL,VR::CS,level.as_ref()),
+				InMemElement::new(request_tag, VR::UI, request_uid.as_ref()),
+			]);
+		self.send_request(req).await?;
+		Ok(PendingStore::new(self, C_GET))
+	}
+
+	/// Makes a list of instances based on the given UID and the retrieve level and executes C-GET calls for all found instances.
+	pub async fn get<'a>(&'a mut self, request_uid:impl AsRef<str>, level:RetrieveLevel) -> Result<Fuse<PendingGet<'a, A>>> where Self: ReceiveMessage + SendPayload + Unpin
+	{
 		let request_tag = match level {
 			RetrieveLevel::PATIENT => todo!(),
 			RetrieveLevel::STUDY => tags::STUDY_INSTANCE_UID,
@@ -245,6 +288,7 @@ impl<A> Association<A>
 
 		PendingGet::new(self, requests)
 	}
+	/// Executes a C-GET for a single instance.
 	pub async fn get_file(&mut self, uid:impl AsRef<str>, sop_class: impl AsRef<str>) -> Result<FileDicomObject<InMemDicomObject>>
 		where Self:SendPayload, Self:ReceiveMessage
 	{

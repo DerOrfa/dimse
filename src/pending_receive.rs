@@ -1,8 +1,6 @@
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
-use dicom::core::{PrimitiveValue, VR};
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use dicom::object::mem::InMemElement;
 use dicom_dictionary_std::tags;
 use crate::association::{Association, ReceiveMessage, SendPayload};
 use crate::error::{DimseError, Result};
@@ -13,7 +11,7 @@ use tracing::{debug, error, trace, warn};
 use crate::error::DimseError::UnexpectedMessage;
 use crate::msg::{MessageType, Response};
 use crate::payload::Payload;
-use crate::{io, RetrieveLevel, Taker};
+use crate::{io, Taker};
 use crate::definitions::RequestCode;
 use crate::status::{success, StatusOk, StatusPending};
 
@@ -26,6 +24,10 @@ enum PendingState<'a,A, R = MessageType>
 	PendingReceive(Pin<Box<dyn Future<Output=(Result<R>, &'a mut Association<A>)>+'a>>),
 	PendingSend(Pin<Box<dyn Future<Output=(Result<()>, &'a mut Association<A>)>+'a>>)
 }
+
+/// Waits for and processes Pending responses expecting them to contain DICOM objects
+///
+/// Any other status than PENDING will terminate the stream
 pub struct PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin {
 	request:RequestCode,
 	pub succeeded:Option<u16>,
@@ -83,7 +85,7 @@ impl<'a,A> PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin
 		let peer = &self.get_association().peer;
 		let a = match response.status.clone() {
 			Ok(StatusOk::Success(_)) => {
-				trace!("Got end signal, closing connection to {peer}..");
+				trace!("Got end signal, closing stream from {peer}..");
 				self.terminated=true;return Ok(None)
 			},
 			Ok(StatusOk::Pending(StatusPending{ succeeded, warn, fail, to_do, .. })) => {
@@ -124,6 +126,11 @@ impl<'a,A> Stream for PendingReceive<'a,A> where Association<A>:ReceiveMessage +
 	}
 }
 
+/// Waits for and processes C_STORE requests expecting them to contain DICOM objects
+///
+/// Sends a StatusSuccess for each received C-STORE.
+/// Uses PendingReceive as inner stream to handle incoming messages and as such closes stream when it receives a StatusSuccess.
+/// Any other request than C-STORE will terminate the stream.
 pub struct PendingStore<'a,A> where Association<A>:ReceiveMessage + Unpin
 {
 	inner:PendingReceive<'a,A>,
@@ -223,6 +230,7 @@ impl<'a, A> Stream for PendingStore<'a, A> where Association<A>:ReceiveMessage +
 	}
 }
 
+/// Executes discrete C-GETs for a list of instances with their SOP Class
 pub struct PendingGet<'a,A> where Association<A>:ReceiveMessage + Unpin {
 	requests:Vec<(String,String)>,
 	state:PendingState<'a,A, FileDicomObject<InMemDicomObject>>,

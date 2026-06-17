@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::task::{JoinSet};
 use tracing::{debug, error, info, trace, warn};
-use crate::association::{Release, SendPayload};
+use crate::association::SendPayload;
 use crate::error::DimseError::UnexpectedResponse;
 use crate::io::FileAccess;
 use crate::lazy_attachment_to_string;

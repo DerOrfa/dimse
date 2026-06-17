@@ -45,8 +45,8 @@ impl Client {
 
 		debug!("Connecting to {addr}");
 		inner
-			.read_timeout(Duration::from_secs(60))
-			.write_timeout(Duration::from_secs(60))
+			.read_timeout(Duration::from_mins(5))
+			.write_timeout(Duration::from_mins(1))
 			.calling_ae_title(calling_ae.unwrap_or("ANY-SCU".into()))
 			.called_ae_title(addr.ae_title().unwrap_or("ANY-SCP"))
 			.establish_async(addr.socket_addr()).await
