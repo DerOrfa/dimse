@@ -81,7 +81,7 @@ impl<B> Dispatcher<B> where B:FileAccess
 				match self.ass.read_pdu().await{
 					Err(DimseError::AssReadError { source }) => {
 						match source {
-							dicom_ul::association::Error::ConnectionClosed => {
+							dicom_ul::association::Error::ConnectionClosed{..} => {
 								self.state = OpenState::Closed;
 								None
 							}

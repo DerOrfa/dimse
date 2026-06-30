@@ -1,3 +1,4 @@
+use std::backtrace::Backtrace;
 use std::collections::HashMap;
 use crate::association::{Association, ReceiveMessage, Release, SendPayload};
 use crate::context::Context;
@@ -270,6 +271,6 @@ impl SendPayload for Association<TaskPipe> {
 impl ReceiveMessage for Association<TaskPipe> {
 	async fn receive_message(&mut self) -> crate::error::Result<MessageType> {
 		self.inner.source.recv().await.map(|m|MessageType::Response(m))
-			.ok_or(ConnectionClosed.into())
+			.ok_or(ConnectionClosed{ backtrace: Backtrace::capture() }.into())
 	}
 }

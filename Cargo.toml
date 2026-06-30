@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-dicom = { git = "https://github.com/Enet4/dicom-rs.git" }
-dicom-ul = {git = "https://github.com/Enet4/dicom-rs.git", features = ["async"]}
-dicom-dictionary-std = { git = "https://github.com/Enet4/dicom-rs.git", features = ["sop-class"] }
+dicom = { version = "0.10.0" }
+dicom-ul = { version = "0.10.0", features = ["async"]}
+dicom-dictionary-std = { version = "0.10.0", features = ["sop-class"] }
 tokio = { version = "1.49", features = ["signal", "macros", "rt-multi-thread", "fs", "net", "sync"] }
 tracing = "0.1.44"
 thiserror = "2.0.18"

@@ -1,5 +1,5 @@
 use futures::Stream;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
@@ -103,6 +103,10 @@ pub enum Commands
 		/// UID of the study
 		uid:String
 	},
+	ListSeries {
+		/// UID of the study
+		uid:String
+	},
 	/// Store one or more DICOM files.
 	Store {
 		/// glob or single file dicom file to upload
@@ -194,7 +198,7 @@ async fn main() -> dimse::error::Result<()>
 			sp.finish_and_clear();
 
 			let progress = ProgressBar::no_length();
-			progress.set_style(ProgressStyle::with_template("[Scanning studies] {wide_bar} {pos}/{len}").unwrap());
+			progress.set_style(ProgressStyle::with_template("[Scanning study] {wide_bar} {pos}/{len}").unwrap());
 			while let Some(obj) = found.next().await.transpose()? {
 				if let Some(s) = found.size_hint().1 {
 					progress.set_length(progress.position() + s as u64)
@@ -220,6 +224,58 @@ async fn main() -> dimse::error::Result<()>
 				let row = [
 					Cell::new::<String>(Taker::take(&mut obj,tags::CONTENT_TIME)?),
 					Cell::new::<String>(Taker::take(&mut obj,tags::SOP_INSTANCE_UID)?),
+					Cell::new(as_name),
+				];
+				table.add_row(row);
+			}
+			if table.row_count() > 0 {
+				println!("{}", table);
+			}
+		}
+		Commands::ListSeries { uid } => {
+			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
+			sp.set_message(format!(r#"Looking up "{}""#, uid));
+			let mut series:HashMap<String,_> = Default::default();
+			let mut found =client.find(RetrieveLevel::IMAGE,[
+				InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, uid),
+				InMemElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::Empty),
+				InMemElement::new(tags::SERIES_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
+				InMemElement::new(tags::SERIES_NUMBER, VR::UI, PrimitiveValue::Empty),
+				InMemElement::new(tags::SERIES_DESCRIPTION, VR::UI, PrimitiveValue::Empty),
+				InMemElement::new(tags::SERIES_TIME,VR::TM, PrimitiveValue::Empty),
+			]).await?;
+			sp.finish_and_clear();
+
+			let progress = ProgressBar::no_length();
+			progress.set_style(ProgressStyle::with_template("[Scanning study] {wide_bar} {pos}/{len}").unwrap());
+			while let Some(mut obj) = found.next().await.transpose()? {
+				if let Some(s) = found.size_hint().1 {
+					progress.set_length(progress.position() + s as u64)
+				}
+				progress.inc(1);
+				series.insert(Taker::take(&mut obj,tags::SERIES_INSTANCE_UID)?,obj);
+			}
+			progress.finish_and_clear();
+			let mut series = series.into_iter().collect::<Vec<_>>();
+			series.sort_by_key::<String,_>(|(_,o)|Taker::get(o,tags::SERIES_TIME).unwrap());
+
+			let mut table = Table::new();
+			let reg = StandardSopClassDictionary::default();
+			table
+				.set_header(vec!["uid","time","number", "description", "abstract syntax"])
+				.set_content_arrangement(ContentArrangement::Dynamic);
+
+			for (s_uid,mut obj) in series
+			{
+				let as_name= Taker::take_opt(&mut obj,tags::SOP_CLASS_UID)?
+					.and_then(|e:String|reg.by_uid(e.as_str()))
+					.map(|t|t.name())
+					.unwrap_or("<UNKNOWN>");
+				let row = [
+					Cell::new::<String>(s_uid),
+					Cell::new::<String>(Taker::take(&mut obj,tags::SERIES_TIME)?),
+					Cell::new::<String>(Taker::take(&mut obj,tags::SERIES_NUMBER)?),
+					Cell::new::<String>(Taker::take(&mut obj,tags::SERIES_DESCRIPTION)?),
 					Cell::new(as_name),
 				];
 				table.add_row(row);
