@@ -184,20 +184,26 @@ impl<A> Association<A>
 	}
 
 	pub async fn move_study(&mut self, uid:impl AsRef<str>, dest_aet:impl AsRef<str>)
+	                        -> Result<PendingReceive<'_, A>> where Self: ReceiveMessage + SendPayload + Unpin
+	{
+		self.move_ident([
+			InMemElement::new(tags::QUERY_RETRIEVE_LEVEL,VR::CS,RetrieveLevel::STUDY.as_ref()),
+			InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, uid.as_ref()),
+		], dest_aet).await
+	}
+	pub async fn move_ident(&mut self, ident:impl IntoIterator<Item=InMemElement>, dest_aet:impl AsRef<str>)
 		-> Result<PendingReceive<'_, A>> where Self: ReceiveMessage + SendPayload + Unpin
 	{
 		let rq = self.new_request(C_MOVE, uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE, vec![
 			InMemElement::new(tags::MOVE_DESTINATION,VR::AE, dest_aet.as_ref()),
-		])?.with_identifier([
-			InMemElement::new(tags::QUERY_RETRIEVE_LEVEL,VR::CS,RetrieveLevel::STUDY.as_ref()),
-			InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, uid.as_ref()),
-		]);
+		])?.with_identifier(ident);
 
 		self.send_request(rq).await.map(|_|PendingReceive::new(self,C_MOVE))
 	}
 
 	pub async fn store_file(&mut self, file:&Path, attr:impl IntoIterator<Item=InMemElement>) -> Result<StatusOk> where Self: SendPayload + ReceiveMessage
 	{
+		// @todo sop class should not be hardwired
 		let mut req= self.new_request(C_STORE, uids::ENHANCED_MR_IMAGE_STORAGE,attr)?;
 		let ret = req.attach_file(file,&self.context)?; // this will override the SOP Class above
 		self.send_request(req).await?;

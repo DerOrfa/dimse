@@ -16,6 +16,7 @@ use dicom_dictionary_std::{tags, StandardSopClassDictionary};
 use comfy_table::{Cell, ContentArrangement, Table};
 use comfy_table::Attribute::Dim;
 use dicom::core::dictionary::{UidDictionary, UidDictionaryEntry};
+use dicom::core::header::Header;
 use dicom::transfer_syntax::{TransferSyntaxIndex, TransferSyntaxRegistry};
 use dicom_ul::AeAddr;
 use futures::{StreamExt, TryStreamExt};
@@ -130,6 +131,28 @@ async fn connect(addr:AeAddr<SocketAddr>, calling_ae:Option<String>) -> dimse::e
 	sp.set_message(format!("Connecting to {}", addr));
 	Client::new(addr, calling_ae, vec![]).await
 		.map(|c|(c,sp))
+}
+
+async fn lookup(client:&mut ClientAssociation, uid:&str) -> dimse::error::Result<Option<impl IntoIterator<Item=InMemElement> + use<>>>
+{
+	for (lvl, tag) in [(RetrieveLevel::STUDY,tags::STUDY_INSTANCE_UID), (RetrieveLevel::SERIES, tags::SERIES_INSTANCE_UID), (RetrieveLevel::IMAGE, tags::SOP_INSTANCE_UID)]
+	{
+		let mut found:Vec<_> =client
+			.find(lvl.clone(), [InMemElement::new(tag, VR::UI, uid),]).await?
+			.try_collect().await?;
+
+		if let Some(found) = found.pop(){
+			info!("Found {} {uid}", lvl.as_ref());
+			return Ok(Some(found.into_iter()
+				.filter(|e|
+					e.tag() == tags::QUERY_RETRIEVE_LEVEL ||
+					e.tag() == tags::STUDY_INSTANCE_UID ||
+					e.tag() == tags::SERIES_INSTANCE_UID ||
+					e.tag() == tags::SOP_INSTANCE_UID
+				)));
+		}
+	}
+	Ok(None)
 }
 
 #[tokio::main]
@@ -288,18 +311,21 @@ async fn main() -> dimse::error::Result<()>
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
 			sp.finish_and_clear();
 
-			let progress = ProgressBar::no_length();
-			progress.set_style(ProgressStyle::with_template("[Initiating move] {wide_bar} {pos}/{len}").unwrap());
-			let mut mover = client.move_study(uid, aet.clone()).await?;
-			progress.set_style(ProgressStyle::with_template(["[Moving {len} files to ",&aet,"] {wide_bar} {eta}"].concat().as_str()).unwrap());
-			while let Some(_) = mover.next().await.transpose()?{
-				progress.inc(1);
-				if let Some(s) = mover.to_do {
-					progress.set_length(progress.position() + s as u64)
+			if let Some(found) = lookup(&mut client,uid.as_str()).await?
+			{
+				let progress = ProgressBar::no_length();
+				progress.set_style(ProgressStyle::with_template("[Initiating move] {wide_bar} {pos}/{len}").unwrap());
+				let mut mover = client.move_ident(found, aet.clone()).await?;
+				progress.set_style(ProgressStyle::with_template(["[Moving {len} files to ",&aet,"] {wide_bar} {eta}"].concat().as_str()).unwrap());
+				while let Some(_) = mover.next().await.transpose()?{
+					progress.inc(1);
+					if let Some(s) = mover.to_do {
+						progress.set_length(progress.position() + s as u64)
+					}
 				}
-			}
-			drop(mover);
-			progress.finish();
+				drop(mover);
+				progress.finish();
+			};
 			client.release().await?;
 		}
 		Commands::Store { pattern } => {
