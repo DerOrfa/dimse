@@ -52,8 +52,7 @@ pub(crate) fn make_file(obj: InMemDicomObject, ts:&str) -> Result<FileDicomObjec
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_b.2.3.html
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part07/chapter_9.html
 			error!("Error {e} when preparing received data for storage");
-			Err(failure(FailureCode::ProcessingFailure).comment(format!("Failed storing {uid}:({e})"))
-			)
+			Err(failure(FailureCode::ProcessingFailure).comment(format!("Failed storing {uid}:({e})")))
 		}
 	}
 }

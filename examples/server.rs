@@ -7,7 +7,7 @@ use dicom_ul::AeAddr;
 use dimse::definitions::FailureCode;
 use dimse::error::DimseError;
 use dimse::io::{FileAccess, ItemResult};
-use dimse::status::{failure, Comment, Offending, Status, StatusFailure};
+use dimse::status::{failure, success, Comment, Offending, Status, StatusFailure};
 use dimse::{io, RetrieveLevel, Taker};
 use glob::glob;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -24,7 +24,7 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio::task::{spawn_blocking, JoinSet};
 use tokio::{signal, spawn};
-use tracing::{info, Level};
+use tracing::{debug, info, Level};
 use dimse::definitions::FailureCode::MissingAttribute;
 use dimse::identifier::Identifier;
 
@@ -59,7 +59,9 @@ struct Cli {
 	#[arg(value_parser = socketaddr_value_parser)]
 	addr:AeAddr<SocketAddr>,
 	/// A (globbing) path for files to serve.
-	path:String,
+	dest:String,
+	/// A (globbing) path for files to serve.
+	glob:Option<String>,
 }
 
 
@@ -81,49 +83,58 @@ pub(crate) fn socketaddr_value_parser(value: &str) -> Result<AeAddr<SocketAddr>,
 #[derive(Clone)]
 struct Accessor
 {
+	dest:PathBuf,
 	files:Arc<RwLock<HashMap<String,PathBuf>>>,
 	series:Arc<RwLock<HashMap<String,Vec<String>>>>,
 	studies:Arc<RwLock<HashMap<String,Vec<String>>>>
 }
 
 impl Accessor {
-	pub async fn new(glb:&str) -> dimse::error::Result<Self>{
+	pub async fn new(glb: Option<String>, dest:impl Into<PathBuf>) -> dimse::error::Result<Self>{
 		let mut readers=JoinSet::new();
 		let sp = ProgressBar::new_spinner();
+		let dest = dest.into();
 		sp.enable_steady_tick(Duration::from_millis(500));
-		sp.set_message(format!("Scanning {glb}"));
-		for p in glob(glb).unwrap().filter_map(Result::ok){
-			readers.spawn(async move {
-				(p.clone(),OpenFileOptions::new()
-					.read_until(tags::PIXEL_DATA)
-					.open_file(p))
-			});
+		if let Some(glb) = glb {
+			sp.set_message(format!("Scanning {glb}"));
+			for p in glob(glb.as_str()).unwrap().filter_map(Result::ok) {
+				readers.spawn(async move {
+					(p.clone(), OpenFileOptions::new()
+						.read_until(tags::PIXEL_DATA)
+						.open_file(p))
+				});
+			}
 		}
 		sp.finish_and_clear();
-		let progress=ProgressBar::new(readers.len() as u64);
-		progress.set_style(ProgressStyle::with_template("[Reading {len} files] {wide_bar} {eta}").unwrap());
-		let mut instances = HashMap::default();
-		let mut series: HashMap<_, Vec<_>> = HashMap::default();
-		let mut studies:HashMap<_, Vec<_>> = HashMap::default();
-		while let Some((p,result)) = readers.join_next().await.transpose().unwrap() {
-			if let Ok(o) = result
-			{
-				let instance = Taker::get(&o,tags::SOP_INSTANCE_UID)?;
-				let ser = Taker::get(&o,tags::SERIES_INSTANCE_UID)?;
-				let stdy = Taker::get(&o,tags::STUDY_INSTANCE_UID)?;
-				instances.insert(String::clone(&instance),p);
-				series.entry(ser).or_default().push(String::clone(&instance));
-				studies.entry(stdy).or_default().push(String::clone(&instance));
+		if !readers.is_empty(){
+			let progress=ProgressBar::new(readers.len() as u64);
+			progress.set_style(ProgressStyle::with_template("[Reading {len} files] {wide_bar} {eta}").unwrap());
+			let mut instances = HashMap::default();
+			let mut series: HashMap<_, Vec<_>> = HashMap::default();
+			let mut studies:HashMap<_, Vec<_>> = HashMap::default();
+			while let Some((p,result)) = readers.join_next().await.transpose().unwrap() {
+				if let Ok(o) = result
+				{
+					let instance = Taker::get(&o,tags::SOP_INSTANCE_UID)?;
+					let ser = Taker::get(&o,tags::SERIES_INSTANCE_UID)?;
+					let stdy = Taker::get(&o,tags::STUDY_INSTANCE_UID)?;
+					instances.insert(String::clone(&instance),p);
+					series.entry(ser).or_default().push(String::clone(&instance));
+					studies.entry(stdy).or_default().push(String::clone(&instance));
+				}
+				progress.inc(1);
 			}
-			progress.inc(1);
+			progress.finish_and_clear();
+			info!("Registered {} instances", instances.len());
+			Ok(Self{
+				dest,
+				files: Arc::new(RwLock::new(instances)),
+				series: Arc::new(RwLock::new(series)),
+				studies: Arc::new(RwLock::new(studies)),
+			})
+		} else {
+			Ok(Self{dest, files:Default::default(),series:Default::default(),studies:Default::default()})
 		}
-		progress.finish_and_clear();
-		info!("Registered {} instances", instances.len());
-		Ok(Self{
-			files: Arc::new(RwLock::new(instances)),
-			series: Arc::new(RwLock::new(series)),
-			studies: Arc::new(RwLock::new(studies)),
-		})
 	}
 	pub fn stream_files<'a>(&self,direct_select:Option<String>) -> impl Stream<Item=ItemResult<(String,InMemDicomObject)>> + Send +'a
 	{
@@ -159,8 +170,17 @@ impl FileAccess for Accessor
 		self.files.read().await.get(uid).cloned().ok_or(failure(FailureCode::NoSuchSOPInstance))
 	}
 
-	async fn store_file(&mut self, _: FileDicomObject<InMemDicomObject>) -> Status {
-		todo!()
+	async fn store_file(&mut self, o: FileDicomObject<InMemDicomObject>) -> Status
+	{
+		let uid = o.get(tags::SOP_INSTANCE_UID).unwrap().to_str().unwrap();
+		let modality = o.get(tags::MODALITY).unwrap().to_str().unwrap();
+		let file = self.dest.join(format!("{modality}.{uid}.dcm"));
+		debug!("Writing file {}",file.display());
+		match o.write_to_file(file)
+		{
+			Ok(_) => success().into(),
+			Err(e) => Err(failure(FailureCode::ProcessingFailure).comment(e)),
+		}
 	}
 
 	async fn lookup<'a>(&self, ident: impl Into<Identifier> + Send) -> Result<BoxStream<'a,Self::Item>, StatusFailure> {
@@ -245,7 +265,7 @@ async fn main() -> Result<(),DimseError>
 		drop(signal_rx);
 	});
 
-	let a= Accessor::new(cli.path.as_str()).await?;
+	let a= Accessor::new(cli.glob, cli.dest).await?;
 	let address = (cli.addr.ae_title().unwrap_or("DIMSE").to_string(),dicom_listener);
 	dimse::serve(address, [], signal_tx, a).await
 }
