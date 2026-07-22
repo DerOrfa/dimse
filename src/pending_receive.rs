@@ -9,7 +9,7 @@ use futures::stream::{Fuse, FusedStream};
 use snafu::ResultExt;
 use tracing::{debug, error, trace, warn};
 use crate::error::DimseError::UnexpectedMessage;
-use crate::msg::{MessageType, Response};
+use crate::msg::{MessageType, Request, Response};
 use crate::payload::Payload;
 use crate::{io, Taker};
 use crate::definitions::RequestCode;
@@ -29,7 +29,7 @@ enum PendingState<'a,A, R = MessageType>
 ///
 /// Any other status than PENDING will terminate the stream
 pub struct PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin {
-	request:RequestCode,
+	request:Request,
 	pub succeeded:Option<u16>,
 	pub warn:Option<u16>,
 	pub failed:Option<u16>,
@@ -40,7 +40,7 @@ pub struct PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin {
 
 impl<'a,A> PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin
 {
-	pub fn new(ass: &'a mut Association<A>, request: RequestCode) -> Self
+	pub fn new(ass: &'a mut Association<A>, request: Request) -> Self
 	{
 		Self{request, succeeded: None, warn: None, failed: None, to_do: None, terminated: false, state:PendingState::Free(ass)}
 	}
@@ -70,8 +70,8 @@ impl<'a,A> PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin
 	}
 	fn poll_response(&mut self, cx: &mut Context<'_>) -> Poll<Result<Response>> {
 		match ready!(self.poll_message(cx)?) {
-			MessageType::Response(r) if r.command==self.request => Poll::Ready(Ok(r)),
-			r => Err(UnexpectedMessage { expected: format!("response to {}",self.request), actual: r })?,
+			MessageType::Response(r) if r.command==self.request.command && r.id == self.request.id => Poll::Ready(Ok(r)),
+			r => Err(UnexpectedMessage { expected: format!("response to {}", self.request), actual: r })?,
 		}
 	}
 	fn get_association(&self) -> &Association<A>{
@@ -139,7 +139,7 @@ pub struct PendingStore<'a,A> where Association<A>:ReceiveMessage + Unpin
 
 impl<'a, A> PendingStore<'a, A> where Association<A>: ReceiveMessage + Unpin
 {
-	pub fn new(ass: &'a mut Association<A>, request_code: RequestCode) -> Self {
+	pub fn new(ass: &'a mut Association<A>, request_code: Request) -> Self {
 		let inner = PendingReceive::new(ass,request_code);
 		Self{inner,	store: None}
 	}

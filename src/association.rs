@@ -170,7 +170,7 @@ impl<A> Association<A>
 		let rq = self.new_request(C_FIND, uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND, vec![])?
 			.with_identifier(attr.into_iter().chain([InMemElement::new(tags::QUERY_RETRIEVE_LEVEL,VR::CS,level.as_ref())]));
 
-		self.send_request(rq).await.map(|_|PendingReceive::new(self, C_FIND))
+		self.send_request(rq.clone()).await.map(|_|PendingReceive::new(self, rq))
 	}
 	pub async fn collect_abstract_syntax(&mut self, filter:impl IntoIterator<Item = InMemElement>)
 		-> Result<impl FusedStream<Item=Result<String>>> where Self: ReceiveMessage + SendPayload + Unpin
@@ -198,7 +198,7 @@ impl<A> Association<A>
 			InMemElement::new(tags::MOVE_DESTINATION,VR::AE, dest_aet.as_ref()),
 		])?.with_identifier(ident);
 
-		self.send_request(rq).await.map(|_|PendingReceive::new(self,C_MOVE))
+		self.send_request(rq.clone()).await.map(|_|PendingReceive::new(self,rq))
 	}
 
 	pub async fn store_file(&mut self, file:&Path, attr:impl IntoIterator<Item=InMemElement>) -> Result<StatusOk> where Self: SendPayload + ReceiveMessage
@@ -263,8 +263,8 @@ impl<A> Association<A>
 				InMemElement::new(tags::QUERY_RETRIEVE_LEVEL,VR::CS,level.as_ref()),
 				InMemElement::new(request_tag, VR::UI, request_uid.as_ref()),
 			]);
-		self.send_request(req).await?;
-		Ok(PendingStore::new(self, C_GET))
+		self.send_request(req.clone()).await?;
+		Ok(PendingStore::new(self, req))
 	}
 
 	/// Makes a list of instances based on the given UID and the retrieve level and executes C-GET calls for all found instances.

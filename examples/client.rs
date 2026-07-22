@@ -18,6 +18,7 @@ use comfy_table::Attribute::Dim;
 use dicom::core::dictionary::{UidDictionary, UidDictionaryEntry};
 use dicom::core::header::Header;
 use dicom::transfer_syntax::{TransferSyntaxIndex, TransferSyntaxRegistry};
+use dicom_dictionary_std::uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND;
 use dicom_ul::AeAddr;
 use futures::{StreamExt, TryStreamExt};
 use glob::glob;
@@ -25,7 +26,9 @@ use dimse::error::DimseError;
 use snafu::prelude::*;
 use dimse::{RetrieveLevel, Taker};
 use indicatif::{ProgressBar, ProgressStyle};
-use dimse::association::{Release};
+use dimse::association::{Release, SendPayload};
+use dimse::definitions::RequestCode::C_ECHO;
+use dimse::status::StatusOk;
 
 #[derive(Clone)]
 struct LogLevel(Level);
@@ -120,7 +123,9 @@ pub enum Commands
 		out:PathBuf
 	},
 	/// Probing which abstract syntaxes the server supports
-	Probe {}
+	Probe,
+	/// Sending a single C-ECHO
+	Echo
 }
 
 async fn connect(addr:AeAddr<SocketAddr>, calling_ae:Option<String>) -> dimse::error::Result<(ClientAssociation,ProgressBar)>
@@ -398,7 +403,7 @@ async fn main() -> dimse::error::Result<()>
 			}
 			client.release().await?;
 		}
-		Commands::Probe { } => {
+		Commands::Probe => {
 			let mut table = Table::new();
 			table
 				.set_header(vec!["ID", "Abstract Syntax UID", "Abstract Syntax Name", "transfer syntax", "transfer syntax name"])
@@ -422,6 +427,24 @@ async fn main() -> dimse::error::Result<()>
 				}
 			}
 			println!("{}", table);
+		}
+		Commands::Echo => {
+			let mut client = Client::new(cli.addr, cli.calling_ae, []).await?;
+			let r = client.new_request(C_ECHO,STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND,[])?;
+			client.send_request(r).await?;
+			match client.receive_response(C_ECHO).await?.status
+			{
+				Ok(StatusOk::Success(_)) => {
+					println!("Success");
+				},
+				Ok(r) => {
+					error!("Unexpected reply from {} to C-ECHO: {r}",client.peer_address());
+				},
+				Err(e) => {
+					error!("Error reply from {} to C-ECHO: {e}",client.peer_address());
+				}
+			}
+
 		}
 	}
 	Ok(())
