@@ -97,7 +97,7 @@ pub enum Commands
 	/// Move a measurement to another PACS.
 	Move {
 		/// UID of the study
-		uid:String,
+		uid:Vec<String>,
 		/// AET of the PACS to send to (must be known by the peer)
 		aet:String,
 	},
@@ -321,21 +321,23 @@ async fn main() -> dimse::error::Result<()>
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
 			sp.finish_and_clear();
 
-			if let Some(found) = lookup(&mut client,uid.as_str()).await?
-			{
-				let progress = ProgressBar::no_length();
-				progress.set_style(ProgressStyle::with_template("[Initiating move] {wide_bar} {pos}/{len}").unwrap());
-				let mut mover = client.move_ident(found, aet.clone()).await?;
-				progress.set_style(ProgressStyle::with_template(["[Moving {len} files to ",&aet,"] {wide_bar} {eta}"].concat().as_str()).unwrap());
-				while let Some(_) = mover.next().await.transpose()?{
-					progress.inc(1);
-					if let Some(s) = mover.to_do {
-						progress.set_length(progress.position() + s as u64)
+			for uid in uid {
+				if let Some(found) = lookup(&mut client,uid.as_str()).await?
+				{
+					let progress = ProgressBar::no_length();
+					progress.set_style(ProgressStyle::with_template("[Initiating move] {wide_bar} {pos}/{len}").unwrap());
+					let mut mover = client.move_ident(found, aet.clone()).await?;
+					progress.set_style(ProgressStyle::with_template(["[Moving {len} files to ",&aet,"] {wide_bar} {eta}"].concat().as_str()).unwrap());
+					while let Some(_) = mover.next().await.transpose()?{
+						progress.inc(1);
+						if let Some(s) = mover.to_do {
+							progress.set_length(progress.position() + s as u64)
+						}
 					}
-				}
-				drop(mover);
-				progress.finish();
-			};
+					drop(mover);
+					progress.finish();
+				};
+			}
 			client.release().await?;
 		}
 		Commands::Store { pattern } => {
