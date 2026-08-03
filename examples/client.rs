@@ -342,7 +342,7 @@ async fn main() -> dimse::error::Result<()>
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
 			sp.set_message(format!(r#"Storing "{}""#, pattern.join(",")));
 
-			for p in pattern{
+			for p in pattern {
 				let files = glob(p.as_ref()).map_err(|e|e.to_string())
 					.with_whatever_context::<_,_,DimseError>(|e|format!("Globbing error {e}"))?.filter_map(|r|
 				{

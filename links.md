@@ -32,7 +32,7 @@ https://dicom.nema.org/dicom/2013/output/chtml/part07/chapter_E.html
 - [Identifier Structure](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.html#sect_C.4.1.1.3.2)
   - The C-FIND SCP is required to support either or both the Retrieve AE Title Data Element or the Storage Media File-Set ID/Storage Media File Set UID Data Elements.
 
-## C-MOVE
+### C-MOVE
 - [Operation](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.2.html#sect_C.4.2.1)
 - [Service](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/chapter_9.html#sect_9.1.4)
 - [Status](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/chapter_9.html#sect_9.1.4.1.7)
@@ -44,7 +44,7 @@ The Identifier in a C-MOVE response with a status of:
 - Cancel, Failure, or Warning shall contain the Failed SOP Instance UID List Attribute
 - Pending shall not contain the Failed SOP Instance UID List Attribute (no Data Set)
 
-## C-GET
+### C-GET
 - [Parameters](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.3.html#sect_C.4.3.1)
 - [Behavior](https://dicom.nema.org/medical/dicom/current/output/chtml/part04/sect_C.4.3.2.html)
 - [Protocol](https://dicom.nema.org/medical/dicom/current/output/chtml/part07/sect_9.3.3.html)

@@ -258,8 +258,10 @@ impl TaskHandle {
 }
 
 impl SendPayload for Association<TaskPipe> {
-	async fn send_request(&mut self, request: Request) -> crate::error::Result<()> {
+	async fn send_request(&mut self, mut request: Request) -> crate::error::Result<()> {
 		self.inner.msg_register.write().unwrap().insert(request.id, request.command.clone());
+		let sop_class= self.context.select_pc(request.pc_id).abstract_syntax.as_str();
+		request.obj.put_str(tags::AFFECTED_SOP_CLASS_UID, VR::UI, sop_class);
 		self.send_payload(request.try_into()?).await
 
 	}

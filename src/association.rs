@@ -50,10 +50,7 @@ pub(crate) trait SendPdu
 }
 pub trait SendPayload
 {
-	async fn send_request(&mut self, request: Request) -> Result<()>
-	{
-		self.send_payload(request.try_into()?).await
-	}
+	async fn send_request(&mut self, request: Request) -> Result<()>;
 	async fn send_payload(&mut self, payload: Payload) -> Result<()>;
 }
 pub(crate) trait ReceivePdu
@@ -346,12 +343,18 @@ impl<A> Association<A>
 
 impl<A> SendPayload for Association<A> where A:SendPdu
 {
+	async fn send_request(&mut self, mut request: Request) -> Result<()> {
+		let sop_class= self.context.select_pc(request.pc_id).abstract_syntax.as_str();
+		request.obj.put_str(tags::AFFECTED_SOP_CLASS_UID, VR::UI, sop_class);
+		self.send_payload(request.try_into()?).await
+	}
+
 	async fn send_payload(&mut self, payload: Payload) -> Result<()>
 	{
 		let pc_id= payload.command.presentation_context_id;
 		self.send_pdu(&Pdu::PData {data:vec![payload.command]}).await?;
 		match payload.attachment {
-			Attachment::File{ path, offset, pc_id } =>{
+			Attachment::File{ path, offset, pc_id } => {
 				self.inner.send_file(path.as_path(), SeekFrom::Start(offset), pc_id).await
 					.map(drop)
 					.with_whatever_context(|e|

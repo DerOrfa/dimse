@@ -121,7 +121,7 @@ impl TryInto<Payload> for Request
 		let code = dicom_value!(U16, self.inner.command.clone().into());
 		self.inner.obj.put(DataElement::new(tags::COMMAND_FIELD, VR::US, code));
 		self.inner.obj.put(DataElement::new(tags::MESSAGE_ID, VR::US,dicom_value!(self.inner.id)));
-		self.inner.obj.put(DataElement::new(tags::PRIORITY,VR::US, dicom_value!(self.priority)));
+		self.inner.obj.put(DataElement::new(tags::PRIORITY, VR::US, dicom_value!(self.priority)));
 		self.inner.into_payload()
 	}
 }
@@ -295,7 +295,8 @@ impl Message
 		// see if we can send in the original transfer syntax
 		 match context.match_file(&meta) {
 			Some(pc) => { // Great, set the pc and attach the file itself
-				debug!("directly attaching file {} to the message {} using presentation context index {}",filename.display(), self.id, pc.id);
+				debug!("directly attaching file {} to the message {}",filename.display(), self.id);
+				debug!("using transfer syntax {} and SOP Class {}", pc.transfer_syntax, pc.abstract_syntax);
 				self.pc_id = pc.id;
 				self.attachment = Attachment::File { path: filename.to_path_buf(), offset, pc_id:pc.id};
 				Ok(success().into())
@@ -371,17 +372,12 @@ impl Message
 impl Request {
 	pub fn new(command: RequestCode, ctx:&PresentationContextNegotiated, attr: impl IntoIterator<Item=InMemElement>) -> Request
 	{
-		let mut obj = InMemDicomObject::command_from_element_iter(attr);
-		if obj.get(tags::AFFECTED_SOP_INSTANCE_UID).is_none(){
-			obj.put_str(tags::AFFECTED_SOP_CLASS_UID,VR::UI, ctx.abstract_syntax.clone());
-		}
-
 		Request{
 			priority: 0,
 			inner: Message {
 				command, pc_id:ctx.id,
 				id: rand::random::<u16>(),
-				obj,
+				obj: InMemDicomObject::command_from_element_iter(attr),
 				attachment: Attachment::None,
 			},
 		}
