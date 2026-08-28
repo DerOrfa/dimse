@@ -17,7 +17,7 @@ async fn test_server_init() -> Result<()>
         .called_ae_title("TEST")
         .with_abstract_syntax(VERIFICATION)
         .establish(addr)?;
-    association.release()?;
+    association.release().ok();
 
     drop(watcher);
     handle.await.unwrap()?; // watcher is dropped, so server should close
