@@ -1,32 +1,32 @@
+use crate::RetrieveLevel;
 use dicom::core::header::{HasLength, Header};
 use dicom::object::mem::InMemElement;
 use dicom::object::{InMemDicomObject, Tag};
 use dicom_dictionary_std::tags;
-use tracing::warn;
-use crate::RetrieveLevel;
 use glob_match::glob_match;
+use tracing::warn;
 
-#[derive(Debug,Clone)]
-pub struct Identifier
-{
-	filters:Vec<InMemElement>,
-	lookup:Vec<Tag>,
-	pub level:Option<RetrieveLevel>
+#[derive(Debug, Clone)]
+pub struct Identifier {
+	pub filters: Vec<InMemElement>,
+	lookup: Vec<Tag>,
+	pub level: Option<RetrieveLevel>,
 }
 
 impl Identifier {
-	pub fn extract(&self, obj:&mut InMemDicomObject) -> (Vec<InMemElement>,Vec<Tag>) {
-		let mut ret =vec![];
-		let mut missing =vec![];
-		for tag in &self.lookup
-		{
-			if let Some(found) = obj.take(tag.clone()) && !found.is_empty(){
+	pub fn extract(&self, obj: &mut InMemDicomObject) -> (Vec<InMemElement>, Vec<Tag>) {
+		let (ret, mut missing) = self.matches(&obj);
+		let mut ret = ret.into_iter().map(InMemElement::clone).collect::<Vec<_>>();
+		for tag in &self.lookup {
+			if let Some(found) = obj.take(tag.clone())
+				&& !found.is_empty()
+			{
 				ret.push(found);
 			} else {
 				missing.push(tag.clone());
 			}
 		}
-		(ret,missing)
+		(ret, missing)
 	}
 
 	/// Returns all filter-elements existing and matching in obj.

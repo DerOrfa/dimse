@@ -25,7 +25,7 @@ enum PendingState<'a,A, R = MessageType>
 	PendingSend(Pin<Box<dyn Future<Output=(Result<()>, &'a mut Association<A>)>+'a>>)
 }
 
-/// Waits for and processes Pending responses expecting them to contain DICOM objects
+/// Stream that waits for and processes Pending responses expecting them to contain DICOM objects
 ///
 /// Any other status than PENDING will terminate the stream
 pub struct PendingReceive<'a,A> where Association<A>:ReceiveMessage + Unpin {
