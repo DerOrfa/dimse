@@ -4,10 +4,7 @@ use crate::definitions::RequestCode;
 use crate::error::DimseError;
 use crate::error::DimseError::{IncompleteMsg, InvalidStatus, UnexpectedEmptyMsg};
 use crate::payload::{Attachment, Payload};
-use crate::status::{
-    Code, Comment, Status, StatusFailure, StatusOk, StatusPending, StatusWarning, WarningCode,
-    success, warning,
-};
+use crate::status::{failure, success, warning, Code, Comment, Status, StatusFailure, StatusOk, StatusPending, StatusWarning, WarningCode, FailureCode};
 use crate::{Taker, io, lazy_attachment_to_string, lazy_dump_to_string};
 use dicom::core::header::HasLength;
 use dicom::core::smallvec::SmallVec;
@@ -384,8 +381,12 @@ impl Message {
     ) -> Result<StatusOk, StatusFailure> {
         let filename = filename.as_ref();
         // read metadata header
+        if !filename.is_file(){
+            return Err(failure(FailureCode::ProcessingFailure)
+                .comment(format!("{} is not a file", filename.display())))
+        }
         let (meta, offset) = io::get_filemeta(filename).with_whatever_context::<_, _, DimseError>(
-            |_| "Failed getting header of {} for attachment",
+            |_| format!("Failed getting header of {} for attachment", filename.display()),
         )?;
         // use that to fill reply
         self.obj.put(DataElement::new(
