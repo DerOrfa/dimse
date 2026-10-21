@@ -5,7 +5,7 @@ use crate::context::Context;
 use crate::definitions::{FailureCode, RequestCode};
 use crate::msg::{MessageType, Request, Response};
 use crate::payload::Payload;
-use crate::{io, Taker};
+use crate::{io, Taker, RetrieveLevel};
 use dicom_dictionary_std::tags;
 use dicom_ul::{AeAddr, FullAeAddr};
 use std::net::SocketAddr;
@@ -140,7 +140,12 @@ impl<B> Task<B> where B:FileAccess
 			}
 			RequestCode::C_MOVE => {
 				let mut ok_response:StatusOk=success().into();
-				if let Some(ident) = request.take_attachment_obj().map(Identifier::from){
+				if let Some(mut ident) = request.take_attachment_obj().map(Identifier::from) {
+					ident.level = match ident.level{
+						Some(RetrieveLevel::PATIENT) => return Err(failure(FailureCode::InvalidArgument).comment("Cannot do patient level retrieve")),
+						Some(_) => Some(RetrieveLevel::IMAGE), // we always want to move actual images
+						None => None
+					};
 					let mut instances = self.backend.lookup(ident).await?;
 					let mut pend = pending(instances.size_hint().1.map(|l|l as u16));
 					let destination:String = Taker::take(&mut request.obj,tags::MOVE_DESTINATION)
