@@ -5,14 +5,15 @@ use crate::context::Context;
 use crate::definitions::{FailureCode, RequestCode};
 use crate::msg::{MessageType, Request, Response};
 use crate::payload::Payload;
-use crate::{io, Taker, RetrieveLevel};
-use dicom_dictionary_std::tags;
+use crate::{io, Taker};
+use dicom_dictionary_std::{tags, StandardDataDictionary};
 use dicom_ul::{AeAddr, FullAeAddr};
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
-use dicom::core::VR;
+use dicom::core::{DataDictionary, VR};
+use dicom::core::header::{HasLength, Header};
 use dicom::dicom_value;
 use dicom::object::mem::InMemElement;
 use dicom_ul::association::Error::ConnectionClosed;
@@ -102,7 +103,7 @@ impl<B> Task<B> where B:FileAccess
 						{
 							Ok(s) => {
 								match s {
-									StatusOk::Success(_) => {pend.succeed();},
+									StatusOk::Success(_) => {pend.next();},
 									StatusOk::Warning (_) => {
 										pend.warn();
 									}
@@ -128,11 +129,11 @@ impl<B> Task<B> where B:FileAccess
 					pin!(instances);
 					while let Some(mut ob) = instances.try_next().await?
 					{
-						pend.succeed();
-						// @todo spec says we should have things we don't have as empty elements
+						pend.next();
+						let results = ident.process_reply(ob);
 						let resp = request
 							.make_response(pend.clone())
-							.with_identifier(ident.extract(&mut ob).0);
+							.with_identifier(results);
 						self.assoc.send_payload(resp.try_into()?).await?;
 					}
 					success().into()
@@ -174,7 +175,7 @@ impl<B> Task<B> where B:FileAccess
 							.map_err(|e|failure(FailureCode::InvalidSOPInstance).comment(e))?;
 
 						match Self::c_store_file_to(file.as_path(), &mut client, attr).await{
-							Ok(StatusOk::Success(_)) => pend.succeed(),
+							Ok(StatusOk::Success(_)) => pend.next(),
 							Ok(StatusOk::Warning(_)) => {
 								pend.warn()
 							},

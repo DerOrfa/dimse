@@ -78,7 +78,7 @@ pub fn failure(code:FailureCode) -> StatusFailure {StatusFailure{code, ..Default
 
 impl StatusPending
 {
-	pub(crate) fn succeed(&mut self) -> &Self{
+	pub(crate) fn next(&mut self) -> &Self{
 		self.succeeded.as_mut().map(|s|*s+=1);
 		self.to_do.as_mut().map(|s|*s-=1);
 		self
