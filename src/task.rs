@@ -5,15 +5,14 @@ use crate::context::Context;
 use crate::definitions::{FailureCode, RequestCode};
 use crate::msg::{MessageType, Request, Response};
 use crate::payload::Payload;
-use crate::{io, Taker};
-use dicom_dictionary_std::{tags, StandardDataDictionary};
+use crate::{io, Taker, RetrieveLevel};
+use dicom_dictionary_std::tags;
 use dicom_ul::{AeAddr, FullAeAddr};
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
-use dicom::core::{DataDictionary, VR};
-use dicom::core::header::{HasLength, Header};
+use dicom::core::VR;
 use dicom::dicom_value;
 use dicom::object::mem::InMemElement;
 use dicom_ul::association::Error::ConnectionClosed;
@@ -127,7 +126,7 @@ impl<B> Task<B> where B:FileAccess
 					let mut pend = pending(instances.size_hint().1.map(|l|l as u16));
 
 					pin!(instances);
-					while let Some(mut ob) = instances.try_next().await?
+					while let Some(ob) = instances.try_next().await?
 					{
 						pend.next();
 						let results = ident.process_reply(ob);
