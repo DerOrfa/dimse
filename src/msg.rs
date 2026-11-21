@@ -11,7 +11,7 @@ use dicom::core::smallvec::SmallVec;
 use dicom::core::{DataElement, PrimitiveValue, VR};
 use dicom::dicom_value;
 use dicom::object::mem::InMemElement;
-use dicom::object::{open_file, FileMetaTable, InMemDicomObject, FileDicomObject, DefaultDicomObject};
+use dicom::object::{open_file, FileMetaTable, InMemDicomObject, FileDicomObject};
 use dicom::transfer_syntax::entries::IMPLICIT_VR_LITTLE_ENDIAN;
 use dicom_dictionary_std::tags;
 use dicom_dictionary_std::uids::{ENHANCED_MR_IMAGE_STORAGE, MR_IMAGE_STORAGE};
