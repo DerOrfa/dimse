@@ -27,12 +27,13 @@ pub trait FileAccess: Clone + Send + Sync
 	fn get_path(&self, itm:&Self::Item) -> impl Future<Output = Result<PathBuf, StatusFailure>> + Send;
 	/// store an image object
 	fn store_file(&mut self, file:FileDicomObject<InMemDicomObject>) -> impl Future<Output = Status> + Send;
-	/// look up an item
+	/// look up SOP Instances
 	///
-	/// `ident` is expected to be an identifier as described for the relative operation
-	/// Only unique descriptors or empty elements are allowed.
-	/// Use `find` for searches with wildcards
-	fn lookup<'a>(&self, ident: impl Into<Identifier> + Send)
+	/// Finds all instances in a identified by `ident`.
+	/// Only unique descriptors or empty elements are allowed in `ident`.
+	/// Item lookup level is defined by `QUERY_RETRIEVE_LEVEL` in `ident` by returns are always images.
+	/// Use `find` for searches with wildcards.
+	fn lookup_instances<'a>(&self, ident: impl Into<Identifier> + Send)
 		-> impl Future<Output = Result<BoxStream<'a,Self::Item>, StatusFailure>> + Send;
 	/// find items
 	///

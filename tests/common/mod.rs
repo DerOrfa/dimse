@@ -57,7 +57,7 @@ impl FileAccess for NullAccess {
 		unimplemented!()
 	}
 
-	async fn lookup<'a>(&self, _: impl Into<Identifier>) -> Result<BoxStream<'a,Self::Item>, StatusFailure> {
+	async fn lookup_instances<'a>(&self, _: impl Into<Identifier>) -> Result<BoxStream<'a,Self::Item>, StatusFailure> {
 		unimplemented!()
 	}
 
@@ -121,7 +121,7 @@ impl FileAccess for MultiFileAccess {
 		Ok(success().into())
 	}
 
-	async fn lookup<'a>(&self, ident: impl Into<Identifier> + Send) -> Result<BoxStream<'a,Self::Item>, StatusFailure> {
+	async fn lookup_instances<'a>(&self, ident: impl Into<Identifier> + Send) -> Result<BoxStream<'a,Self::Item>, StatusFailure> {
 		let ident = ident.into();
 		match ident.level {
 			Some(RetrieveLevel::IMAGE) => {

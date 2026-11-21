@@ -5,15 +5,15 @@ use dicom::object::mem::InMemElement;
 use dicom_dictionary_std::tags;
 use dicom_ul::AeAddr;
 use dimse::RetrieveLevel;
+use dimse::Taker;
 use dimse::client::{Client, ClientAssociation};
 use futures::{Stream, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::time::Duration;
-use tracing::{info, Level};
-use dimse::Taker;
+use tracing::Level;
 
 #[derive(Clone)]
 struct LogLevel(Level);

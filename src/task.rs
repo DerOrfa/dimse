@@ -93,7 +93,7 @@ impl<B> Task<B> where B:FileAccess
 			// https://dicom.nema.org/medical/dicom/current/output/chtml/part04/chapter_C.html
 			RequestCode::C_GET => {
 				if let Some(o) = request.take_attachment_obj(){
-					let instances = self.backend.lookup(o).await?;
+					let instances = self.backend.lookup_instances(o).await?;
 					let mut pend = pending(instances.size_hint().1.map(|e|e as u16));
 					pin!(instances);
 
@@ -141,7 +141,7 @@ impl<B> Task<B> where B:FileAccess
 			RequestCode::C_MOVE => {
 				let mut ok_response:StatusOk=success().into();
 				if let Some(ident) = request.take_attachment_obj().map(Identifier::from){
-					let mut instances = self.backend.lookup(ident).await?;
+					let mut instances = self.backend.lookup_instances(ident).await?;
 					let mut pend = pending(instances.size_hint().1.map(|l|l as u16));
 					let destination:String = Taker::take(&mut request.obj,tags::MOVE_DESTINATION)
 						.map_err(|_|failure(FailureCode::MissingAttribute).offending([tags::MOVE_DESTINATION]))?;

@@ -183,7 +183,7 @@ impl FileAccess for Accessor
 		}
 	}
 
-	async fn lookup<'a>(&self, ident: impl Into<Identifier> + Send) -> Result<BoxStream<'a,Self::Item>, StatusFailure> {
+	async fn lookup_instances<'a>(&self, ident: impl Into<Identifier> + Send) -> Result<BoxStream<'a,Self::Item>, StatusFailure> {
 		let ident = ident.into();
 		match ident.level {
 			Some(RetrieveLevel::IMAGE) => {
