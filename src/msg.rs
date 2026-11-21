@@ -11,7 +11,7 @@ use dicom::core::smallvec::SmallVec;
 use dicom::core::{DataElement, PrimitiveValue, VR};
 use dicom::dicom_value;
 use dicom::object::mem::InMemElement;
-use dicom::object::{InMemDicomObject, open_file};
+use dicom::object::{open_file, FileMetaTable, InMemDicomObject, FileDicomObject, DefaultDicomObject};
 use dicom::transfer_syntax::entries::IMPLICIT_VR_LITTLE_ENDIAN;
 use dicom_dictionary_std::tags;
 use dicom_dictionary_std::uids::{ENHANCED_MR_IMAGE_STORAGE, MR_IMAGE_STORAGE};
@@ -368,7 +368,60 @@ impl Message {
         };
     }
 
-    /// Attach a file to the request (e.g. C-STORE).
+	fn attach_file_impl(
+		&mut self,
+		mut att: Attachment,
+		meta:FileMetaTable,
+		context: &Context,
+	) -> Result<StatusOk, StatusFailure> {
+		self.obj.put(DataElement::new(
+			tags::AFFECTED_SOP_INSTANCE_UID,
+			VR::UI,
+			meta.media_storage_sop_instance_uid(),
+		));
+		// see if we can send in the original transfer syntax
+		match context.match_file(&meta) {
+			Some(pc) => {
+				// Great, set the pc and attach the file itself
+				debug!(
+                    "using transfer syntax {} and SOP Class {}",
+                    pc.transfer_syntax, pc.abstract_syntax
+                );
+				self.pc_id = pc.id;
+				if let Attachment::File { path, pc_id, .. } = &mut att{
+					*pc_id = pc.id;
+					debug!("directly attaching file {} to the message {}", path.display(), self.id);
+				}
+				self.attachment = att;
+				Ok(success().into())
+			}
+			None => {
+				// Nope, try fallbacks
+				let pc = context
+					.find_pc(ENHANCED_MR_IMAGE_STORAGE) // Fallback to ENHANCED_MR_IMAGE_STORAGE
+					.or_else(|_| context.find_pc(MR_IMAGE_STORAGE))?; // Fallback to MR_IMAGE_STORAGE or bail
+				self.pc_id = pc.id;
+				let o = match att {
+					Attachment::File { path, offset, pc_id } =>
+						open_file(&path).with_whatever_context::<_, _, DimseError>(|e| {
+							format!("Failed reading {} for attachment ({e})", path.display())
+						})?.into_inner(),
+					Attachment::SmallObj(o) | Attachment::Obj(o) => o,
+					Attachment::None => panic!("Calling attach with an empty attachment")
+				};
+				self.attachment = Attachment::Obj(o);
+				Ok(warning(WarningCode::DataCoercion)
+					.comment(format!(
+						"Instance has storage class {} but was coerced into {} with transfer syntax {}",
+						meta.media_storage_sop_instance_uid(),
+						pc.abstract_syntax, pc.transfer_syntax
+					))
+					.into())
+			}
+		}
+
+	}
+		/// Attach a file to the request (e.g. C-STORE).
     ///
     /// This will try to select the actual SOP Class and Transfer syntax of the file from the agreed on abstract syntaxes.
     ///
@@ -388,59 +441,19 @@ impl Message {
         let (meta, offset) = io::get_filemeta(filename).with_whatever_context::<_, _, DimseError>(
             |_| format!("Failed getting header of {} for attachment", filename.display()),
         )?;
-        // use that to fill reply
-        self.obj.put(DataElement::new(
-            tags::AFFECTED_SOP_INSTANCE_UID,
-            VR::UI,
-            meta.media_storage_sop_instance_uid(),
-        ));
-
-        // see if we can send in the original transfer syntax
-        match context.match_file(&meta) {
-            Some(pc) => {
-                // Great, set the pc and attach the file itself
-                debug!(
-                    "directly attaching file {} to the message {}",
-                    filename.display(),
-                    self.id
-                );
-                debug!(
-                    "using transfer syntax {} and SOP Class {}",
-                    pc.transfer_syntax, pc.abstract_syntax
-                );
-                self.pc_id = pc.id;
-                self.attachment = Attachment::File {
-                    path: filename.to_path_buf(),
-                    offset,
-                    pc_id: pc.id,
-                };
-                Ok(success().into())
-            }
-            None => {
-                // Nope, try fallbacks
-                debug!(
-                    "Attaching file {} as object to the message {}",
-                    filename.display(),
-                    self.id
-                );
-                let pc = context
-                    .find_pc(ENHANCED_MR_IMAGE_STORAGE) // Fallback to ENHANCED_MR_IMAGE_STORAGE
-                    .or_else(|_| context.find_pc(MR_IMAGE_STORAGE))?; // Fallback to MR_IMAGE_STORAGE or bail
-                self.pc_id = pc.id;
-                let o = open_file(filename).with_whatever_context::<_, _, DimseError>(|e| {
-                    format!("Failed reading {} for attachment ({e})", filename.display())
-                })?;
-                self.attachment = Attachment::Obj(o.into_inner());
-                Ok(warning(WarningCode::DataCoercion)
-					.comment(format!(
-						"Instance has storage class {} but was coerced into {} with transfer syntax {}",
-						meta.media_storage_sop_instance_uid(),
-						pc.abstract_syntax, pc.transfer_syntax
-					))
-					.into())
-            }
-        }
+		self.attach_file_impl(
+			Attachment::File {path: filename.to_path_buf(),offset,pc_id: 0},
+			meta, context
+		)
     }
+	pub(crate) fn attach_fileobj(
+		&mut self,
+		obj:FileDicomObject<InMemDicomObject>,
+		context: &Context,
+	) -> Result<StatusOk, StatusFailure> {
+		let meta = obj.meta().clone();
+		self.attach_file_impl(Attachment::Obj(obj.into_inner()), meta, context)
+	}
     pub fn abstract_syntax<'a, A>(&self, ass: &'a Association<A>) -> &'a str {
         ass.context.select_pc(self.pc_id).abstract_syntax.as_str()
     }
