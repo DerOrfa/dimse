@@ -360,15 +360,40 @@ impl<A> Association<A> {
 	where
 		Self: SendPayload + ReceiveMessage,
 	{
-		// @todo sop class should not be hardwired
 		let mut req = self.new_request(C_STORE, uids::ENHANCED_MR_IMAGE_STORAGE, attr)?;
 		let ret = req.attach_file(file, &self.context)?; // this will override the SOP Class above
+
+		match self.send_store(req).await{
+			Ok(StatusOk::Success(_)) => Ok(ret),
+			s => s
+		}
+	}
+
+	pub async fn store_fileobj(
+		&mut self,
+		obj: FileDicomObject<InMemDicomObject>,
+		attr: impl IntoIterator<Item = InMemElement>,
+	) -> Result<StatusOk>
+		where
+			Self: SendPayload + ReceiveMessage,
+	{
+		let mut req = self.new_request(C_STORE, uids::ENHANCED_MR_IMAGE_STORAGE, attr)?;
+		let ret = req.attach_fileobj(obj, &self.context)?; // this will override the SOP Class above
+
+		match self.send_store(req).await {
+			Ok(StatusOk::Success(_)) => Ok(ret),
+			s => s
+		}
+	}
+
+	async fn send_store(&mut self,	req: Request) -> Result<StatusOk> where	Self: SendPayload + ReceiveMessage,
+	{
 		self.send_request(req).await?;
 
 		loop {
 			// wait for confirmation
 			match self.receive_response(C_STORE).await?.status {
-				Ok(StatusOk::Success(_)) => return Ok(ret),
+				Ok(StatusOk::Success(s)) => return Ok(StatusOk::Success(s)),
 				Ok(StatusOk::Warning(w)) => {
 					warn!("Unexpected Warning reply from c-store {w} ");
 					return Ok(w.into());
@@ -677,27 +702,15 @@ where
 		ts: &TransferSyntax,
 		o: InMemDicomObject,
 	) -> Result<()> {
-		// check out the association
-		let mut checkout = self
-			.take()
-			.expect("trying to check out already checked out connection");
 		let ts = ts.uid();
+		let mut buffer = Cursor::new(vec![]);
+		o.write_dataset_with_ts(&mut buffer,TransferSyntaxRegistry::default().get(ts).unwrap())
+			.with_whatever_context::<_, _, DimseError>(|e|format!("Failed writing object: {e}"))?;
 
-		let checkout = spawn_blocking(move || {
-			let mut sink = SyncIoBridge::new(checkout.send_pdata(pc_id));
-			let r = o
-				.write_dataset_with_ts(
-					&mut sink,
-					TransferSyntaxRegistry::default().get(ts).unwrap(),
-				)
-				.with_whatever_context::<_, _, DimseError>(|e| {
-					format!("Failed sending object: {e}")
-				});
-			drop(sink);
-			r.map(|_| checkout)
-		})
-		.await??;
-		self.replace(checkout);
+		let mut sink = self.get_sink(pc_id)?;
+		sink.write_all(buffer.into_inner().as_ref()).await
+			.with_whatever_context::<_, _, DimseError>(|e| {format!("Failed sending object: {e}")})?;
+		drop(sink);
 		Ok(())
 	}
 
