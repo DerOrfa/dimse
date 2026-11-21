@@ -269,7 +269,7 @@ async fn main() -> dimse::error::Result<()>
 			let (mut client, sp) = connect(cli.addr, cli.calling_ae).await?;
 			sp.set_message(format!(r#"Looking up "{}""#, uid));
 			let mut series:HashMap<String,_> = Default::default();
-			let mut found =client.find(RetrieveLevel::IMAGE,[
+			let mut found =client.find(RetrieveLevel::SERIES,[
 				InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, uid),
 				InMemElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::Empty),
 				InMemElement::new(tags::SERIES_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
