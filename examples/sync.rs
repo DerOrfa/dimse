@@ -2,7 +2,7 @@ use clap::builder::PossibleValue;
 use clap::{Parser, ValueEnum};
 use dicom::core::{PrimitiveValue, VR};
 use dicom::object::mem::InMemElement;
-use dicom_dictionary_std::tags;
+use dicom_dictionary_std::{tags, StandardSopClassDictionary};
 use dicom_ul::AeAddr;
 use dimse::RetrieveLevel;
 use dimse::Taker;
@@ -11,10 +11,12 @@ use futures::{Stream, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::collections::BTreeMap;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::process::exit;
 use std::str::FromStr;
 use std::time::Duration;
-use tokio::{join, try_join};
+use comfy_table::{Cell, ContentArrangement, Table};
+use dicom::core::dictionary::{UidDictionary, UidDictionaryEntry};
+use dicom::object::InMemDicomObject;
+use tokio::{try_join};
 use tracing::{info, Level};
 
 #[derive(Clone)]
@@ -37,7 +39,6 @@ impl ValueEnum for LogLevel
 		Some(PossibleValue::new(self.0.as_str()).alias(alias))
 	}
 }
-
 
 pub fn socketaddr_value_parser(value: &str) -> Result<AeAddr<SocketAddr>, String>
 {
@@ -71,7 +72,9 @@ struct Cli {
 	calling_ae:Option<String>,
 	/// UID of the study to synchronize
 	study:String,
-
+	#[arg(long)]
+	/// only show what would be copied
+	probe:bool
 }
 
 async fn connect(addr:AeAddr<SocketAddr>, calling_ae:&Option<String>, multi_progress: &MultiProgress)
@@ -85,12 +88,14 @@ async fn connect(addr:AeAddr<SocketAddr>, calling_ae:&Option<String>, multi_prog
 }
 
 async fn get_instances(study:&str, client:&mut ClientAssociation, sp:ProgressBar)
-	-> dimse::error::Result<BTreeMap<String,String>> {
+	-> dimse::error::Result<BTreeMap<String,InMemDicomObject>> {
 	sp.set_message(format!("Scanning {}", client.peer_address().to_string()));
-	let mut instances = BTreeMap::<String,String>::default();
+	let mut instances = BTreeMap::<_,_>::default();
 	let mut found =client.find(RetrieveLevel::IMAGE,[
 		InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, study),
 		InMemElement::new(tags::SERIES_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
+		InMemElement::new(tags::SERIES_DESCRIPTION, VR::UI, PrimitiveValue::Empty),
+		InMemElement::new(tags::SERIES_NUMBER, VR::UI, PrimitiveValue::Empty),
 		InMemElement::new(tags::SOP_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
 		InMemElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::Empty),
 	]).await?;
@@ -106,7 +111,7 @@ async fn get_instances(study:&str, client:&mut ClientAssociation, sp:ProgressBar
 			sp.inc(1);
 			instances.insert(
 				Taker::take(&mut obj, tags::SOP_INSTANCE_UID)?,
-				Taker::take(&mut obj, tags::SOP_CLASS_UID)?,
+				obj,
 			);
 		}
 
@@ -139,16 +144,52 @@ async fn main() -> dimse::error::Result<()>
 		info!("Nothing to copy");
 		return Ok(());
 	}
-	let sp = m.add(ProgressBar::new(remain.len() as u64));
-	sp.set_style(ProgressStyle::with_template(["[{msg}] {wide_bar} {eta}"].concat().as_str()).unwrap());
-	sp.set_message(format!("Copying {} files to {d_name}", remain.len()));
 
-	for (uid,class) in remain {
-		let got = source.get_file(uid,class).await?;
-		dest.store_fileobj(got,[]).await?;
-		sp.inc(1);
+	if cli.probe {
+		drop(m);
+		let mut series = BTreeMap::new();
+		for (k, mut v) in remain {
+			let s_id:String = Taker::take(&mut v,tags::SERIES_INSTANCE_UID)?;
+			series.entry(s_id).or_insert_with(Vec::new).push(v);
+		}
+
+		let mut table = Table::new();
+		let reg = StandardSopClassDictionary::default();
+		table
+			.set_header(vec!["uid", "number", "description", "images", "abstract syntax"])
+			.set_content_arrangement(ContentArrangement::Dynamic);
+
+		for (s_uid, images) in series
+		{
+			let first = images.first().unwrap();
+			let as_name = Taker::get_opt(first,tags::SOP_CLASS_UID)?
+				.and_then(|e:String|reg.by_uid(e.as_str()))
+				.map(|t|t.name())
+				.unwrap_or("<UNKNOWN>");
+			let row = [
+				Cell::new::<String>(s_uid),
+				Cell::new::<String>(Taker::get(first,tags::SERIES_NUMBER)?),
+				Cell::new::<String>(Taker::get(first,tags::SERIES_DESCRIPTION)?),
+				Cell::new(images.len()),
+				Cell::new(as_name),
+			];
+			table.add_row(row);
+		}
+		println!("{}", table);
+
+	} else {
+		let sp = m.add(ProgressBar::new(remain.len() as u64));
+		sp.set_style(ProgressStyle::with_template(["[{msg}] {wide_bar} {eta}"].concat().as_str()).unwrap());
+		sp.set_message(format!("Copying {} images to {d_name}", remain.len()));
+
+		for (uid, mut obj) in remain {
+			let class: String = Taker::take(&mut obj, tags::SOP_CLASS_UID)?;
+			let got = source.get_file(uid, class).await?;
+			dest.store_fileobj(got, []).await?;
+			sp.inc(1);
+		}
+		sp.finish();
 	}
-	sp.finish();
 
 	Ok(())
 }
