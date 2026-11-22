@@ -8,12 +8,14 @@ use dimse::RetrieveLevel;
 use dimse::Taker;
 use dimse::client::{Client, ClientAssociation};
 use futures::{Stream, StreamExt};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::collections::BTreeMap;
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::process::exit;
 use std::str::FromStr;
 use std::time::Duration;
-use tracing::Level;
+use tokio::{join, try_join};
+use tracing::{info, Level};
 
 #[derive(Clone)]
 struct LogLevel(Level);
@@ -72,9 +74,10 @@ struct Cli {
 
 }
 
-async fn connect(addr:AeAddr<SocketAddr>, calling_ae:&Option<String>) -> dimse::error::Result<(ClientAssociation,ProgressBar)>
+async fn connect(addr:AeAddr<SocketAddr>, calling_ae:&Option<String>, multi_progress: &MultiProgress)
+	-> dimse::error::Result<(ClientAssociation,ProgressBar)>
 {
-	let sp = ProgressBar::new_spinner();
+	let sp = multi_progress.add(ProgressBar::new_spinner());
 	sp.enable_steady_tick(Duration::from_millis(500));
 	sp.set_message(format!("Connecting to {}", addr));
 	Client::new(addr, calling_ae.clone(), vec![]).await
@@ -83,7 +86,7 @@ async fn connect(addr:AeAddr<SocketAddr>, calling_ae:&Option<String>) -> dimse::
 
 async fn get_instances(study:&str, client:&mut ClientAssociation, sp:ProgressBar)
 	-> dimse::error::Result<BTreeMap<String,String>> {
-	sp.set_message(format!(r#"Looking up "{}""#, study));
+	sp.set_message(format!("Scanning {}", client.peer_address().to_string()));
 	let mut instances = BTreeMap::<String,String>::default();
 	let mut found =client.find(RetrieveLevel::IMAGE,[
 		InMemElement::new(tags::STUDY_INSTANCE_UID, VR::UI, study),
@@ -91,20 +94,24 @@ async fn get_instances(study:&str, client:&mut ClientAssociation, sp:ProgressBar
 		InMemElement::new(tags::SOP_INSTANCE_UID, VR::UI, PrimitiveValue::Empty),
 		InMemElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::Empty),
 	]).await?;
-	sp.finish_and_clear();
 
-	let progress = ProgressBar::no_length();
-	progress.set_style(ProgressStyle::with_template("[Scanning study] {wide_bar} {pos}/{len}").unwrap());
-	while let Some(mut obj) = found.next().await.transpose()? {
-		if let Some(s) = found.size_hint().1 {
-			progress.set_length(progress.position() + s as u64)
+	if let Some(first) = found.next().await.transpose()? {
+		if let Some(hint) = found.size_hint().1{
+			sp.set_style(ProgressStyle::with_template("[{msg}] {wide_bar} {pos}/{len}").unwrap());
+			sp.set_length(hint as u64);
+		} else {
+			sp.set_style(ProgressStyle::with_template("{spinner} {msg} {pos} images found").unwrap())
 		}
-		progress.inc(1);
-		instances.insert(
-			Taker::take(&mut obj, tags::SOP_INSTANCE_UID)?,
-			Taker::take(&mut obj, tags::SOP_CLASS_UID)?,
-		);
+		while let Some(mut obj) = found.next().await.transpose()? {
+			sp.inc(1);
+			instances.insert(
+				Taker::take(&mut obj, tags::SOP_INSTANCE_UID)?,
+				Taker::take(&mut obj, tags::SOP_CLASS_UID)?,
+			);
+		}
+
 	}
+	sp.finish();
 	Ok(instances)
 }
 
@@ -113,25 +120,35 @@ async fn main() -> dimse::error::Result<()>
 {
 	let cli=Cli::parse();
 	tracing_subscriber::fmt().with_max_level(cli.log_level.0).init();
+	let m = MultiProgress::new();
 
 	let d_name = cli.dest.to_string();
-	let (mut source, source_progress) = connect(cli.source, &cli.calling_ae).await?;
-	let (mut dest, dest_progress) = connect(cli.dest, &cli.calling_ae).await?;
+	let (mut source, source_progress) = connect(cli.source, &cli.calling_ae, &m).await?;
+	let (mut dest, dest_progress) = connect(cli.dest, &cli.calling_ae, &m).await?;
 
-	let in_source = get_instances(cli.study.as_str(),&mut source, source_progress).await?;
-	let in_dest= get_instances(cli.study.as_str(),&mut dest, dest_progress).await?;
+	let (in_source, in_dest) = try_join!(
+		get_instances(cli.study.as_str(), &mut source, source_progress),
+		get_instances(cli.study.as_str(),&mut dest, dest_progress)
+	)?;
+
 	let remain = in_source.into_iter()
-		.filter(|(k,_)|in_dest.contains_key(k))
+		.filter(|(k,_)|!in_dest.contains_key(k))
 		.collect::<Vec<_>>();
 
-	let sp = ProgressBar::new(remain.len() as u64);
-	sp.set_style(ProgressStyle::with_template(["[Copying {len} files to ",&d_name,"] {wide_bar} {eta}"].concat().as_str()).unwrap());
+	if remain.is_empty(){
+		info!("Nothing to copy");
+		return Ok(());
+	}
+	let sp = m.add(ProgressBar::new(remain.len() as u64));
+	sp.set_style(ProgressStyle::with_template(["[{msg}] {wide_bar} {eta}"].concat().as_str()).unwrap());
+	sp.set_message(format!("Copying {} files to {d_name}", remain.len()));
 
 	for (uid,class) in remain {
 		let got = source.get_file(uid,class).await?;
 		dest.store_fileobj(got,[]).await?;
 		sp.inc(1);
 	}
+	sp.finish();
 
 	Ok(())
 }
